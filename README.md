@@ -1,11 +1,12 @@
 # Silverstone 1948 — jeu de course 3D
 
-Un jeu de voiture 3D simple mais réaliste sur le tracé historique du
-**RAC International Grand Prix 1948** à Silverstone : le circuit sur
-l'ancien aérodrome, avec ses deux pointes rentrantes le long des pistes
-d'envol, où **Seagrave** et **Seaman** se font face au centre — séparés
-par un mur blanc et des bottes de foin, comme l'écran de séparation de
-l'époque.
+Un jeu de voiture 3D simple mais réaliste : une **monoplace moderne**
+(antipatinage, ABS, ESP, appui aérodynamique) lancée sur le tracé
+historique du **RAC International Grand Prix 1948** à Silverstone — le
+circuit sur l'ancien aérodrome, avec ses deux pointes rentrantes le long
+des pistes d'envol **en dalles de béton**, où **Seagrave** et **Seaman**
+se font face au centre, séparés par un mur blanc et des bottes de foin
+comme l'écran de séparation de l'époque.
 
 ![Aperçu du tracé](tools/track-preview.svg)
 
@@ -33,7 +34,7 @@ python3 -m http.server 8000
 | `Z` / `W` / `↑` | Accélérer |
 | `S` / `↓` | Freiner, puis marche arrière |
 | `Q` / `A` / `←` et `D` / `→` | Tourner |
-| `Espace` | Frein à main (dérapages) |
+| `Espace` | Frein à main (débranche TC + ESP : mode glisse) |
 | `R` | Replacer la voiture sur la piste |
 | `C` | Caméra (poursuite / capot / ciel) |
 | `P` | Pilote automatique (démonstration) |
@@ -78,14 +79,32 @@ l'aérodrome). Seagrave et Seaman ne se touchent ni ne se croisent jamais :
 leurs apex restent à ~58 m l'un de l'autre, la barrière (mur blanc de
 36 m + deux rangées de 25 bottes de foin) est plantée pile au milieu.
 
+Les deux lignes droites **Copse → Seagrave** et **Stowe → Seaman**
+empruntent les anciennes pistes d'envol de la RAF : leur sol est en
+**dalles de béton** (~7 m, joints apparents), contrairement au reste du
+circuit en asphalte.
+
 ## Réalisme
 
 - **Physique** : modèle bicyclette dynamique — dérive des pneus avec
   saturation (ellipse de friction), moteur limité par la puissance *et*
-  par l'adhérence, freins répartis, traînée aérodynamique, résistance au
-  roulement, fusion cinématique à basse vitesse. Monoplace d'époque :
-  ~750 kg, ~225 ch, 0→100 km/h en ~6 s, ~210 km/h en pointe.
-- **Surfaces** : l'herbe divise l'adhérence par deux et freine fortement.
+  par l'adhérence, traînée aérodynamique, fusion cinématique à basse
+  vitesse. Monoplace moderne : ~720 kg, ~390 ch, 0→100 km/h en ~5 s,
+  ~250 km/h en pointe, freinage 229→0 km/h en 116 m.
+- **Mécanique moderne — la voiture ne part pas dans tous les sens** :
+  - **appui aérodynamique** : l'adhérence augmente avec la vitesse ;
+  - **TC (antipatinage)** : le couple envoyé à l'arrière est plafonné à
+    l'adhérence restante, impossible de partir en toupie au gaz ;
+  - **ABS** : le freinage préserve toujours ~44 % du potentiel avant
+    pour continuer à diriger ;
+  - **ESP** : un couple de lacet correcteur ramène en permanence la
+    rotation vers la trajectoire demandée au volant (testé : dérive
+    max 4,3° en braquage maximal à 160 km/h, aucun survirage au lever
+    de pied, zigzag brutal rattrapable).
+  - `Espace` (frein à main) débranche TC + ESP pour glisser volontairement.
+- **Surfaces** : l'herbe divise l'adhérence par plus de deux et freine
+  fortement ; dalles de béton et asphalte offrent la même adhérence
+  (comme les vraies runways).
 - **Collisions** : masques de collision sur **toutes** les bottes de foin
   (cercles) et sur le mur blanc (segment), avec réponse impulsionnelle
   rigide (rebond, friction, rotation induite).
@@ -115,6 +134,7 @@ node tools/test-game.mjs   # physique + tour complet autopiloté + bannière + c
 node tools/build-single.mjs
 ```
 
-Anecdote : l'autopilote boucle en **2:55.9** — la pole réelle de 1948
-(Louis Chiron / Luigi Villoresi selon les sources) tournait autour de
-2:56. Coïncidence complète, mais de bon augure.
+Anecdote : avec l'ancienne mécanique d'époque, l'autopilote bouclait en
+2:55.9 — la pole réelle de 1948 tournait autour de 2:56. Avec la
+monoplace moderne (TC/ABS/ESP + appui aéro), il descend à **2:04.2** :
+51 secondes gagnées par 75 ans de progrès mécanique.

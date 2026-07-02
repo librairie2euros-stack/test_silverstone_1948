@@ -19,17 +19,19 @@ console.log('=== Tests physique ===\n');
 {
   // Ligne droite, plein gaz 8 s
   const car = new CarPhysics();
-  const surf = { mu: 1.05, rollMult: 1, dragMult: 1 };
+  const MU = car.p.muTrack;
+  const surf = { mu: MU, rollMult: 1, dragMult: 1 };
   let t100 = null;
   for (let t = 0; t < 14; t += FIXED_DT) {
     car.step(FIXED_DT, { throttle: 1, brake: 0, steer: 0, handbrake: false }, surf);
     if (t100 === null && car.vx >= 27.78) t100 = t;
   }
   const vKmh = car.vx * 3.6;
-  check(vKmh > 150 && vKmh < 240, 'Vitesse après 14 s plein gaz plausible', `${vKmh.toFixed(0)} km/h, 0→100 en ${t100 ? t100.toFixed(1) : '?'} s`);
+  check(vKmh > 200 && vKmh < 280, 'Vitesse après 14 s plein gaz (voiture moderne)', `${vKmh.toFixed(0)} km/h, 0→100 en ${t100 ? t100.toFixed(1) : '?'} s`);
+  check(t100 !== null && t100 < 5.5, '0→100 km/h digne d\'une sportive moderne', `${t100 ? t100.toFixed(1) : '?'} s`);
   check(Math.abs(car.y) < 1 && Math.abs(car.vy) < 0.5, 'Trajectoire rectiligne stable', `y=${car.y.toFixed(2)}`);
 
-  // Freinage
+  // Freinage (ABS + appui aéro : au moins aussi bien que la théorie μ seul)
   const v0 = car.vx;
   let dist = 0;
   while (car.vx > 0.5) {
@@ -37,8 +39,8 @@ console.log('=== Tests physique ===\n');
     car.step(FIXED_DT, { throttle: 0, brake: 1, steer: 0, handbrake: false }, surf);
     dist += car.x - x0;
   }
-  const expected = v0 * v0 / (2 * 1.05 * 9.81);
-  check(dist > expected * 0.8 && dist < expected * 1.8, 'Distance de freinage réaliste', `${dist.toFixed(0)} m depuis ${(v0 * 3.6).toFixed(0)} km/h (théorie μ : ${expected.toFixed(0)} m)`);
+  const expected = v0 * v0 / (2 * MU * 9.81);
+  check(dist > expected * 0.4 && dist < expected * 1.3, 'Distance de freinage moderne', `${dist.toFixed(0)} m depuis ${(v0 * 3.6).toFixed(0)} km/h (théorie μ seul : ${expected.toFixed(0)} m)`);
 
   // Virage régulier : rayon cohérent
   const car2 = new CarPhysics();
@@ -50,10 +52,63 @@ console.log('=== Tests physique ===\n');
 
   // Herbe : nettement plus lent
   const car3 = new CarPhysics();
-  const grass = { mu: 0.52, rollMult: 4.0, dragMult: 3.0 };
+  const grass = { mu: 0.55, rollMult: 4.0, dragMult: 3.0 };
   for (let t = 0; t < 10; t += FIXED_DT) car3.step(FIXED_DT, { throttle: 1, brake: 0, steer: 0, handbrake: false }, grass);
   const grassKmh = car3.vx * 3.6;
-  check(grassKmh > 30 && grassKmh < 110, 'L\'herbe ralentit nettement mais on peut revenir', `${grassKmh.toFixed(0)} km/h sur herbe`);
+  check(grassKmh > 30 && grassKmh < 130, 'L\'herbe ralentit nettement mais on peut revenir', `${grassKmh.toFixed(0)} km/h sur herbe`);
+}
+
+console.log('\n=== Tests de stabilité (la voiture ne part pas dans tous les sens) ===\n');
+{
+  const surf = { mu: 1.30, rollMult: 1, dragMult: 1 };
+
+  // 1. Coup de volant maximal maintenu à ~160 km/h : vire fort, SANS tête-à-queue
+  const car = new CarPhysics();
+  car.vx = 45;
+  let maxAlphaR = 0, maxYaw = 0, minV = 999;
+  const h0 = 0;
+  for (let t = 0; t < 3; t += FIXED_DT) {
+    car.step(FIXED_DT, { throttle: 0.3, brake: 0, steer: 1, handbrake: false }, surf);
+    maxAlphaR = Math.max(maxAlphaR, Math.abs(Math.atan2(car.vy - car.p.b * car.r, Math.max(1.2, car.vx))));
+    maxYaw = Math.max(maxYaw, Math.abs(car.r));
+    minV = Math.min(minV, car.vx);
+  }
+  check(maxAlphaR < 0.30, 'Braquage max à 160 km/h : dérive arrière contenue (pas de toupie)', `dérive max ${(maxAlphaR * 180 / Math.PI).toFixed(1)}°`);
+  check(maxYaw < 1.6, 'Vitesse de lacet bornée', `${maxYaw.toFixed(2)} rad/s`);
+  check(car.vx > 15, 'La voiture continue d\'avancer (elle tourne, elle ne glisse pas)', `${(car.vx * 3.6).toFixed(0)} km/h`);
+
+  // 2. Lever de pied brutal en plein virage : pas de survirage brusque
+  const car2 = new CarPhysics();
+  car2.vx = 40;
+  for (let t = 0; t < 1.5; t += FIXED_DT) car2.step(FIXED_DT, { throttle: 0.6, brake: 0, steer: 0.7, handbrake: false }, surf);
+  const rBefore = car2.r;
+  let maxR = 0;
+  for (let t = 0; t < 1.5; t += FIXED_DT) {
+    car2.step(FIXED_DT, { throttle: 0, brake: 0, steer: 0.7, handbrake: false }, surf);
+    maxR = Math.max(maxR, Math.abs(car2.r));
+  }
+  check(maxR < Math.abs(rBefore) * 1.6 + 0.35, 'Lever de pied en virage : pas de survirage violent', `lacet ${rBefore.toFixed(2)} → max ${maxR.toFixed(2)} rad/s`);
+
+  // 3. Zigzag brutal au clavier à ~130 km/h : la voiture reste dans l'axe global
+  const car3 = new CarPhysics();
+  car3.vx = 36;
+  for (let t = 0; t < 4; t += FIXED_DT) {
+    const st = Math.floor(t / 0.5) % 2 === 0 ? 1 : -1; // pleine gauche / pleine droite toutes les 0,5 s
+    car3.step(FIXED_DT, { throttle: 0.5, brake: 0, steer: st, handbrake: false }, surf);
+  }
+  const alphaR3 = Math.abs(Math.atan2(car3.vy - car3.p.b * car3.r, Math.max(1.2, car3.vx)));
+  check(alphaR3 < 0.25 && car3.vx > 20, 'Zigzag brutal : la voiture reste rattrapable', `dérive finale ${(alphaR3 * 180 / Math.PI).toFixed(1)}°, ${(car3.vx * 3.6).toFixed(0)} km/h`);
+
+  // 4. Plein gaz en sortie d'épingle (2e rapport virtuel) : le TC évite le tête-à-queue
+  const car4 = new CarPhysics();
+  car4.vx = 12;
+  let spun = false;
+  for (let t = 0; t < 3; t += FIXED_DT) {
+    car4.step(FIXED_DT, { throttle: 1, brake: 0, steer: 0.9, handbrake: false }, surf);
+    const aR = Math.abs(Math.atan2(car4.vy - car4.p.b * car4.r, Math.max(1.2, car4.vx)));
+    if (aR > 0.45) spun = true;
+  }
+  check(!spun && car4.vx > 12, 'Plein gaz en sortie d\'épingle : le TC tient l\'arrière', `${(car4.vx * 3.6).toFixed(0)} km/h en sortie`);
 }
 
 console.log('\n=== Test de jeu : tour complet en autopilote ===\n');

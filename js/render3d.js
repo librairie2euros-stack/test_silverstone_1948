@@ -29,6 +29,54 @@
     return tx;
   }
 
+  /* Dalles de béton d'aérodrome : 2×2 dalles par tuile, joints sombres,
+     teinte légèrement différente par dalle + mouchetis. */
+  function makeConcreteTexture() {
+    var size = 256;
+    var cv = document.createElement('canvas');
+    cv.width = cv.height = size;
+    var ctx = cv.getContext('2d');
+    var tints = ['#a8a9a1', '#9fa099', '#b0b1a9', '#a4a59e'];
+    for (var sy = 0; sy < 2; sy++) {
+      for (var sx = 0; sx < 2; sx++) {
+        ctx.fillStyle = tints[(sx + sy * 2)];
+        ctx.fillRect(sx * 128, sy * 128, 128, 128);
+      }
+    }
+    // mouchetis + taches d'usure
+    for (var i = 0; i < 900; i++) {
+      var g = 120 + Math.floor(Math.random() * 90);
+      ctx.fillStyle = 'rgb(' + g + ',' + g + ',' + (g - 4) + ')';
+      ctx.globalAlpha = 0.10 + Math.random() * 0.16;
+      var r = 0.6 + Math.random() * 2.2;
+      ctx.beginPath();
+      ctx.arc(Math.random() * size, Math.random() * size, r, 0, 7);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 0.10;
+    for (var st = 0; st < 8; st++) {
+      ctx.fillStyle = '#6e6f68';
+      ctx.beginPath();
+      ctx.ellipse(Math.random() * size, Math.random() * size, 12 + Math.random() * 26, 5 + Math.random() * 9, Math.random() * 3, 0, 7);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    // joints entre dalles
+    ctx.strokeStyle = '#6f7069';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(0, 128); ctx.lineTo(size, 128);
+    ctx.moveTo(128, 0); ctx.lineTo(128, size);
+    ctx.stroke();
+    ctx.strokeStyle = '#7d7e76';
+    ctx.lineWidth = 5;
+    ctx.strokeRect(0, 0, size, size);
+    var tx = new THREE.CanvasTexture(cv);
+    tx.wrapS = tx.wrapT = THREE.RepeatWrapping;
+    tx.encoding = THREE.sRGBEncoding;
+    return tx;
+  }
+
   function makeTextTexture(text, w, h, fg, bg, border) {
     var cv = document.createElement('canvas');
     cv.width = w; cv.height = h;
@@ -107,22 +155,28 @@
   };
 
   /* --------------------- Ruban de piste --------------------- */
-  Renderer3D.prototype._ribbonGeometry = function (latA, latB, y) {
-    // bande entre deux décalages latéraux (gauche +), boucle fermée
+  /* Bande entre deux décalages latéraux (gauche +).
+     Sans i0/i1 : boucle fermée complète. Avec i0/i1 : tronçon ouvert
+     (utilisé pour les dalles de béton des pistes d'envol). */
+  Renderer3D.prototype._ribbonGeometry = function (latA, latB, y, i0, i1, uScale) {
     var samples = this.track.samples, n = samples.length;
-    var pos = new Float32Array((n + 1) * 2 * 3);
-    var uv = new Float32Array((n + 1) * 2 * 2);
+    var closed = (i0 === undefined);
+    var count = closed ? n + 1 : (i1 - i0 + 1);
+    uScale = uScale || 8;
+    var pos = new Float32Array(count * 2 * 3);
+    var uv = new Float32Array(count * 2 * 2);
     var idx = [];
-    for (var i = 0; i <= n; i++) {
-      var sp = samples[i % n];
+    var s0 = closed ? 0 : samples[i0].s;
+    for (var k = 0; k < count; k++) {
+      var sp = closed ? samples[k % n] : samples[i0 + k];
       var nx = -Math.sin(sp.heading), ny = Math.cos(sp.heading);
-      var o = i * 6;
+      var o = k * 6;
       pos[o] = sp.x + nx * latA; pos[o + 1] = y; pos[o + 2] = -(sp.y + ny * latA);
       pos[o + 3] = sp.x + nx * latB; pos[o + 4] = y; pos[o + 5] = -(sp.y + ny * latB);
-      var u = (i === n ? this.track.S : sp.s) / 8;
-      uv[i * 4] = u; uv[i * 4 + 1] = 0; uv[i * 4 + 2] = u; uv[i * 4 + 3] = 1;
-      if (i < n) {
-        var a = i * 2, b = i * 2 + 1, c = i * 2 + 2, d = i * 2 + 3;
+      var u = ((closed && k === n ? this.track.S : sp.s) - s0) / uScale;
+      uv[k * 4] = u; uv[k * 4 + 1] = 0; uv[k * 4 + 2] = u; uv[k * 4 + 3] = 1;
+      if (k < count - 1) {
+        var a = k * 2, b = k * 2 + 1, c = k * 2 + 2, d = k * 2 + 3;
         idx.push(a, b, c, b, d, c);
       }
     }
@@ -142,6 +196,22 @@
     var mesh = new THREE.Mesh(this._ribbonGeometry(W / 2, -W / 2, 0), mat);
     mesh.receiveShadow = true;
     this.scene.add(mesh);
+
+    // Pistes d'envol en dalles de béton : Copse → Seagrave et Stowe → Seaman
+    // (anciennes runways de la RAF ; dalles ~7 m avec joints visibles)
+    var meta = this.track.cornerMeta;
+    var concMat = new THREE.MeshLambertMaterial({ map: makeConcreteTexture() });
+    var runways = [
+      [meta[1].exitIdx, meta[2].exitIdx],  // sortie de Copse → fin du virage Seagrave
+      [meta[6].exitIdx, meta[7].exitIdx]   // sortie de Stowe → fin du virage Seaman
+    ];
+    for (var rw = 0; rw < runways.length; rw++) {
+      var rMesh = new THREE.Mesh(
+        this._ribbonGeometry(W / 2, -W / 2, 0.012, runways[rw][0], runways[rw][1], 14),
+        concMat);
+      rMesh.receiveShadow = true;
+      this.scene.add(rMesh);
+    }
 
     var lineMat = new THREE.MeshBasicMaterial({ color: 0xe8e6e0 });
     var l1 = new THREE.Mesh(this._ribbonGeometry(W / 2 - 0.25, W / 2 - 0.65, 0.02), lineMat);
@@ -279,108 +349,158 @@
     this.scene.add(ti); this.scene.add(ci);
   };
 
-  /* --------------------- Voiture --------------------- */
+  /* --------------------- Voiture (monoplace moderne) --------------------- */
   Renderer3D.prototype._buildCar = function () {
     var car = this.carGroup = new THREE.Group();
     var body = this.carBody = new THREE.Group();
     car.add(body);
 
-    var red = new THREE.MeshPhongMaterial({ color: 0xc0281c, shininess: 55, specular: 0x664444 });
-    var dark = new THREE.MeshPhongMaterial({ color: 0x1c1c1e, shininess: 30 });
+    var red = new THREE.MeshPhongMaterial({ color: 0xc8241a, shininess: 70, specular: 0x774444 });
+    var dark = new THREE.MeshPhongMaterial({ color: 0x17171a, shininess: 35 });
+    var carbon = new THREE.MeshPhongMaterial({ color: 0x26262b, shininess: 60, specular: 0x555560 });
     var silver = new THREE.MeshPhongMaterial({ color: 0xb9bcc2, shininess: 90, specular: 0x888888 });
 
-    // fuselage « cigare »
-    var hull = new THREE.Mesh(new THREE.CapsuleGeometry(0.44, 3.0, 6, 14), red);
-    hull.rotation.z = Math.PI / 2;
-    hull.position.set(0.05, 0.58, 0);
-    hull.scale.set(1, 0.78, 0.92);
-    hull.castShadow = true;
-    body.add(hull);
+    // fond plat
+    var floor = new THREE.Mesh(new THREE.BoxGeometry(3.55, 0.08, 1.45), carbon);
+    floor.position.set(0.05, 0.16, 0);
+    body.add(floor);
 
-    // nez conique
-    var nose = new THREE.Mesh(new THREE.ConeGeometry(0.34, 0.85, 14), red);
+    // monocoque centrale
+    var mono = new THREE.Mesh(new THREE.BoxGeometry(1.85, 0.44, 0.80), red);
+    mono.position.set(0.15, 0.44, 0);
+    mono.castShadow = true;
+    body.add(mono);
+
+    // museau plongeant (pyramide écrasée)
+    var nose = new THREE.Mesh(new THREE.ConeGeometry(0.40, 1.45, 4), red);
     nose.rotation.z = -Math.PI / 2;
-    nose.position.set(2.15, 0.54, 0);
+    nose.rotation.x = Math.PI / 4;
+    nose.position.set(1.80, 0.38, 0);
+    nose.scale.set(1, 1, 0.62); // aplati en hauteur
     nose.castShadow = true;
     body.add(nose);
 
-    // calandre
-    var grille = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.26, 0.1, 14), dark);
-    grille.rotation.z = Math.PI / 2;
-    grille.position.set(2.22, 0.52, 0);
-    body.add(grille);
+    // aileron avant + dérives
+    var fwing = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.05, 1.90), carbon);
+    fwing.position.set(2.18, 0.14, 0);
+    fwing.castShadow = true;
+    body.add(fwing);
+    for (var e = -1; e <= 1; e += 2) {
+      var fplate = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.20, 0.045), red);
+      fplate.position.set(2.18, 0.24, e * 0.95);
+      body.add(fplate);
+    }
 
-    // cockpit (rebord) + queue effilée
-    var cockpit = new THREE.Mesh(new THREE.TorusGeometry(0.30, 0.06, 8, 16), red);
-    cockpit.rotation.x = Math.PI / 2;
-    cockpit.position.set(-0.25, 0.92, 0);
-    body.add(cockpit);
-    var tail = new THREE.Mesh(new THREE.ConeGeometry(0.34, 1.15, 12), red);
-    tail.rotation.z = Math.PI / 2;
-    tail.position.set(-2.05, 0.56, 0);
-    tail.scale.set(1, 0.75, 0.9);
-    tail.castShadow = true;
-    body.add(tail);
+    // pontons latéraux
+    for (var pz = -1; pz <= 1; pz += 2) {
+      var pod = new THREE.Mesh(new THREE.BoxGeometry(1.55, 0.34, 0.44), red);
+      pod.position.set(-0.35, 0.38, pz * 0.62);
+      pod.castShadow = true;
+      body.add(pod);
+      var intake = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.26, 0.34), dark);
+      intake.position.set(0.43, 0.40, pz * 0.62);
+      body.add(intake);
+    }
 
-    // pilote : tête + casque cuir + lunettes
-    var head = new THREE.Mesh(new THREE.SphereGeometry(0.16, 10, 8),
-      new THREE.MeshLambertMaterial({ color: 0x9a6b46 }));
-    head.position.set(-0.25, 1.02, 0);
-    body.add(head);
-    var goggles = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.07, 0.24), dark);
-    goggles.position.set(-0.11, 1.05, 0);
-    body.add(goggles);
+    // capot moteur profilé + prise d'air
+    var spine = new THREE.Mesh(new THREE.CapsuleGeometry(0.24, 1.15, 5, 10), red);
+    spine.rotation.z = Math.PI / 2;
+    spine.position.set(-0.95, 0.62, 0);
+    spine.scale.set(1, 0.85, 0.8);
+    spine.castShadow = true;
+    body.add(spine);
+    var airbox = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.24, 0.30), red);
+    airbox.position.set(-0.42, 0.86, 0);
+    body.add(airbox);
 
-    // pare-brise saute-vent
-    var screen = new THREE.Mesh(new THREE.PlaneGeometry(0.46, 0.17),
-      new THREE.MeshPhongMaterial({ color: 0xcfe8ef, transparent: true, opacity: 0.55, side: THREE.DoubleSide }));
-    screen.position.set(0.26, 0.97, 0);
-    screen.rotation.z = -0.5;
-    screen.rotation.y = Math.PI / 2;
-    body.add(screen);
+    // casque moderne + halo de protection
+    var helmet = new THREE.Mesh(new THREE.SphereGeometry(0.155, 12, 10),
+      new THREE.MeshPhongMaterial({ color: 0xf2f0e8, shininess: 80 }));
+    helmet.position.set(0.10, 0.78, 0);
+    body.add(helmet);
+    var visor = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.07, 0.20), dark);
+    visor.position.set(0.24, 0.80, 0);
+    body.add(visor);
+    var halo = new THREE.Mesh(new THREE.TorusGeometry(0.30, 0.035, 8, 14, Math.PI), carbon);
+    halo.rotation.x = -Math.PI / 2;
+    halo.rotation.z = Math.PI;
+    halo.position.set(0.10, 0.88, 0);
+    body.add(halo);
+    var haloPillar = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.05, 0.05), carbon);
+    haloPillar.rotation.z = 0.45;
+    haloPillar.position.set(0.30, 0.82, 0);
+    body.add(haloPillar);
 
-    // échappement
-    var pipe = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 2.4, 8), silver);
-    pipe.rotation.z = Math.PI / 2;
-    pipe.position.set(-0.7, 0.42, -0.55);
-    body.add(pipe);
+    // aileron arrière (plan principal + volet + dérives + pylône)
+    var rwing = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.045, 1.50), carbon);
+    rwing.position.set(-1.82, 0.92, 0);
+    rwing.rotation.z = 0.10;
+    rwing.castShadow = true;
+    body.add(rwing);
+    var rflap = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.04, 1.50), red);
+    rflap.position.set(-1.95, 1.04, 0);
+    rflap.rotation.z = 0.32;
+    body.add(rflap);
+    for (var re = -1; re <= 1; re += 2) {
+      var rplate = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.42, 0.045), red);
+      rplate.position.set(-1.86, 0.90, re * 0.75);
+      body.add(rplate);
+    }
+    var pylon = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.42, 0.07), carbon);
+    pylon.position.set(-1.80, 0.62, 0);
+    body.add(pylon);
 
-    // numéro sur le nez
-    var num = new THREE.Mesh(new THREE.CircleGeometry(0.24, 20),
+    // feu arrière (pluie)
+    var rainlight = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.10, 0.10),
+      new THREE.MeshBasicMaterial({ color: 0xff2222 }));
+    rainlight.position.set(-2.02, 0.42, 0);
+    body.add(rainlight);
+
+    // numéro sur le museau
+    var num = new THREE.Mesh(new THREE.CircleGeometry(0.22, 20),
       new THREE.MeshBasicMaterial({ map: makeTextTexture('1', 96, 96, '#111', '#f5f2e8') }));
     num.rotation.x = -Math.PI / 2;
-    num.position.set(1.30, 0.87, 0);
+    num.rotation.z = Math.PI / 2;
+    num.position.set(1.15, 0.60, 0);
     body.add(num);
 
-    // roues : groupe de direction (yaw) → groupe de rotation (axe Z)
-    var wheelGeo = new THREE.CylinderGeometry(0.34, 0.34, 0.2, 16);
-    var spokeGeo = new THREE.BoxGeometry(0.5, 0.05, 0.04);
-    var hubMat = new THREE.MeshPhongMaterial({ color: 0xd8d5c8, shininess: 80 });
+    // roues larges : groupe de direction (yaw) → groupe de rotation (axe Z)
+    var wheelGeoF = new THREE.CylinderGeometry(0.35, 0.35, 0.30, 18);
+    var wheelGeoR = new THREE.CylinderGeometry(0.36, 0.36, 0.34, 18);
+    var rimGeoF = new THREE.CylinderGeometry(0.21, 0.21, 0.31, 14);
+    var rimGeoR = new THREE.CylinderGeometry(0.22, 0.22, 0.35, 14);
+    var rimMat = new THREE.MeshPhongMaterial({ color: 0x8f9298, shininess: 100, specular: 0x999999 });
+    var spokeGeo = new THREE.BoxGeometry(0.40, 0.05, 0.05);
     this.wheels = [];
     var defs = [
-      { x: 1.30, z: 0.66, steer: true }, { x: 1.30, z: -0.66, steer: true },
-      { x: -1.30, z: 0.70, steer: false }, { x: -1.30, z: -0.70, steer: false }
+      { x: 1.32, z: 0.76, steer: true, front: true }, { x: 1.32, z: -0.76, steer: true, front: true },
+      { x: -1.35, z: 0.79, steer: false, front: false }, { x: -1.35, z: -0.79, steer: false, front: false }
     ];
     for (var i = 0; i < defs.length; i++) {
       var d = defs[i];
       var steerG = new THREE.Group();
-      steerG.position.set(d.x, 0.34, d.z);
+      steerG.position.set(d.x, 0.35, d.z);
       var spinG = new THREE.Group();
-      var tire = new THREE.Mesh(wheelGeo, dark);
+      var tire = new THREE.Mesh(d.front ? wheelGeoF : wheelGeoR, dark);
       tire.rotation.x = Math.PI / 2;
       tire.castShadow = true;
       spinG.add(tire);
+      var rim = new THREE.Mesh(d.front ? rimGeoF : rimGeoR, rimMat);
+      rim.rotation.x = Math.PI / 2;
+      rim.scale.set(1, 1.02, 1);
+      spinG.add(rim);
       for (var sp = 0; sp < 3; sp++) {
-        var spoke = new THREE.Mesh(spokeGeo, hubMat);
+        var spoke = new THREE.Mesh(spokeGeo, carbon);
         spoke.rotation.z = sp * Math.PI / 3;
+        spoke.position.z = (d.front ? 0.165 : 0.185) * (d.z > 0 ? 1 : -1);
         spinG.add(spoke);
       }
       steerG.add(spinG);
       car.add(steerG);
       this.wheels.push({ steerG: steerG, spinG: spinG, steer: d.steer });
-      // petit bras de suspension
-      var arm = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.06, Math.abs(d.z)), silver);
-      arm.position.set(d.x, 0.38, d.z / 2);
+      // triangles de suspension
+      var arm = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.05, Math.abs(d.z) - 0.35), carbon);
+      arm.position.set(d.x, 0.36, d.z / 2);
       car.add(arm);
     }
 

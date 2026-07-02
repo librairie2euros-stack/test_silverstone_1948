@@ -76,13 +76,14 @@
 
 <div id="overlay">
   <h1>SILVERSTONE 1948</h1>
-  <h2>RAC International Grand Prix — circuit d'époque sur l'aérodrome, 3,54 km</h2>
+  <h2>Monoplace moderne (TC · ABS · ESP · appui aéro) sur le circuit d'époque de l'aérodrome — 3,54 km</h2>
   <div class="keys">
     <b>Z / W / ↑</b> accélérer &nbsp;&nbsp; <b>S / ↓</b> freiner &amp; marche arrière<br>
-    <b>Q / A / ←</b> et <b>D / →</b> tourner &nbsp;&nbsp; <b>Espace</b> frein à main<br>
+    <b>Q / A / ←</b> et <b>D / →</b> tourner &nbsp;&nbsp; <b>Espace</b> frein à main (débranche les aides, pour glisser)<br>
     <b>R</b> replacer la voiture &nbsp;&nbsp; <b>C</b> changer de caméra &nbsp;&nbsp; <b>P</b> pilote automatique<br>
     Valide les 10 points de contrôle (cercles rouges) puis franchis la ligne blanche&nbsp;!<br>
-    Attention à la chicane centrale&nbsp;: Seagrave et Seaman sont séparés par le mur blanc et les bottes de foin.
+    Les lignes droites Copse→Seagrave et Stowe→Seaman roulent sur les dalles de béton des anciennes pistes d'envol&nbsp;;
+    Seagrave et Seaman sont séparés par le mur blanc et les bottes de foin.
   </div>
   <div class="go">— Cliquer ou appuyer sur une touche pour démarrer —</div>
 </div>
@@ -522,11 +523,13 @@
 /* ==== js/carphysics.js ==== */
 /* ============================================================
    Physique voiture — modèle bicyclette dynamique (module pur).
-   Monoplace type Grand Prix 1948 (~750 kg, ~150 kW, propulsion).
+   VOITURE MODERNE : châssis rigide, pneus à forte adhérence,
+   appui aérodynamique, et aides électroniques :
+     - TC  (antipatinage : le couple est limité à l'adhérence restante)
+     - ABS (le freinage préserve toujours de quoi diriger)
+     - ESP (couple de lacet correcteur : la voiture ne part pas en toupie)
+   Le frein à main (Espace) débranche TC + ESP pour glisser volontairement.
    Repère voiture : x vers l'avant, y vers la gauche, lacet CCW+.
-   Forces : moteur (limité par la puissance ET l'adhérence),
-   freins, pneus latéraux saturés (ellipse de friction),
-   traînée aérodynamique, résistance au roulement.
    ============================================================ */
 (function (global) {
   'use strict';
@@ -534,27 +537,33 @@
   var G = 9.81;
 
   var PARAMS = {
-    mass: 750,          // kg
-    inertia: 900,       // kg·m² (lacet)
-    a: 1.30,            // distance CG → essieu avant (m)
-    b: 1.30,            // distance CG → essieu arrière (m)
-    halfWidth: 0.80,    // demi-largeur (m)
-    power: 165e3,       // W (~225 ch, monoplace GP fin des années 40)
-    engineForceMax: 6800,  // N (limite basse vitesse)
-    brakeForceMax: 10500,  // N (total)
-    brakeBias: 0.58,       // proportion avant
-    handbrakeForce: 5200,  // N (arrière)
-    cornerStiffF: 62000,   // N/rad (essieu avant)
-    cornerStiffR: 68000,   // N/rad (essieu arrière)
-    muTrack: 1.05,
-    muGrass: 0.52,
-    dragCoef: 0.70,        // ½ρCdA
-    rollCoef: 220,         // N à v>0 (piste)
+    mass: 720,          // kg (sportive légère moderne)
+    inertia: 850,       // kg·m² (lacet)
+    a: 1.24,            // distance CG → essieu avant (m)
+    b: 1.36,            // CG légèrement avancé → stable (sous-vireur)
+    halfWidth: 0.85,
+    power: 285e3,          // W (~390 ch)
+    engineForceMax: 9800,  // N (limite basse vitesse)
+    brakeForceMax: 16500,  // N (total)
+    brakeBias: 0.62,       // proportion avant
+    handbrakeForce: 6200,  // N (arrière)
+    cornerStiffF: 96000,   // N/rad (essieu avant, pneus modernes)
+    cornerStiffR: 118000,  // N/rad (essieu arrière)
+    muTrack: 1.30,
+    muGrass: 0.55,
+    downforceCoef: 1.15,   // N/(m/s)² d'appui aéro total (~3,3 kN à 190 km/h)
+    downBalanceF: 0.42,    // part de l'appui sur l'essieu avant
+    dragCoef: 0.78,        // ½ρCdA
+    rollCoef: 260,
     rollGrassMult: 4.0,
     dragGrassMult: 3.0,
-    steerMax: 0.55,        // rad (~31°) à l'arrêt
-    steerRate: 3.2,        // rad/s (vitesse du volant)
-    steerLatG: 1.35        // limite de braquage : δmax tel que a_lat ≈ 1.35·μ·g
+    steerMax: 0.52,        // rad (~30°) à l'arrêt
+    steerRate: 4.6,        // rad/s vers la consigne
+    steerReturnMult: 1.7,  // retour au centre plus rapide
+    steerLatG: 1.10,       // limite de braquage utile (fraction du potentiel)
+    espYawGain: 3200,      // N·m par rad/s d'écart de lacet
+    tcSlipStart: 0.12,     // rad : l'antipatinage coupe au-delà de cette dérive arrière
+    absFrontReserve: 0.90  // l'ABS garde ≥ √(1-0.9²) ≈ 44 % du potentiel avant pour tourner
   };
 
   function CarPhysics(opts) {
@@ -566,11 +575,11 @@
 
   CarPhysics.prototype.reset = function (x, y, heading) {
     this.x = x; this.y = y; this.heading = heading;
-    this.vx = 0; this.vy = 0; this.r = 0;   // vitesses repère voiture + vitesse de lacet
-    this.steer = 0;                          // braquage actuel (rad)
+    this.vx = 0; this.vy = 0; this.r = 0;
+    this.steer = 0;
     this.throttle = 0; this.brake = 0;
-    this.wheelSpin = 0;                      // pour l'animation des roues
-    this.slipping = 0;                       // indicateur de glisse (0..1)
+    this.wheelSpin = 0;
+    this.slipping = 0;
   };
 
   CarPhysics.prototype.speed = function () {
@@ -582,76 +591,89 @@
   CarPhysics.prototype.step = function (dt, input, surface) {
     var p = this.p;
     var mu = surface.mu;
-
-    // --- Volant : consigne limitée par la vitesse (anti-tête-à-queue clavier) ---
-    var vAbs = Math.abs(this.vx);
+    var m = p.mass;
     var wheelbase = p.a + p.b;
+    var vAbs = Math.abs(this.vx);
+    var hb = !!input.handbrake;
+    var aids = !hb; // Espace : mode glisse, aides débranchées
+
+    // --- Appui aérodynamique : plus on va vite, plus on colle ---
+    var down = p.downforceCoef * this.vx * this.vx;
+    var FzF = m * G * p.b / wheelbase + down * p.downBalanceF;
+    var FzR = m * G * p.a / wheelbase + down * (1 - p.downBalanceF);
+    var muEff = mu * (1 + down / (m * G)); // potentiel latéral global
+
+    // --- Volant : consigne limitée par la vitesse (inclut l'appui aéro) ---
     var steerLimit = p.steerMax;
     if (vAbs > 4) {
-      var byLatG = Math.atan(p.steerLatG * mu * G * wheelbase / (this.vx * this.vx));
-      steerLimit = Math.min(p.steerMax, Math.max(0.06, byLatG));
+      var byLatG = Math.atan(p.steerLatG * muEff * G * wheelbase / (this.vx * this.vx));
+      steerLimit = Math.min(p.steerMax, Math.max(0.05, byLatG));
     }
     var target = Math.max(-1, Math.min(1, input.steer)) * steerLimit;
     var dSteer = target - this.steer;
-    var maxD = p.steerRate * dt;
+    var rate = p.steerRate;
+    if (target === 0 || target * this.steer < 0) rate *= p.steerReturnMult;
+    var maxD = rate * dt;
     this.steer += Math.max(-maxD, Math.min(maxD, dSteer));
 
     var delta = this.steer;
     this.throttle = input.throttle; this.brake = input.brake;
-
-    // --- Charges verticales statiques ---
-    var m = p.mass;
-    var FzF = m * G * p.b / wheelbase;
-    var FzR = m * G * p.a / wheelbase;
-
-    // --- Forces longitudinales demandées ---
-    var driveF = 0;
-    if (input.throttle > 0) {
-      var vForP = Math.max(3, this.vx);
-      driveF = input.throttle * Math.min(p.engineForceMax, p.power / vForP);
-    }
-    var brakeF = input.brake * p.brakeForceMax;
-    var movingFwd = this.vx > 0.3, movingBack = this.vx < -0.3;
-
-    // Marche arrière : frein → propulsion arrière limitée quand on est arrêté
-    var reverseF = 0;
-    if (input.brake > 0 && !movingFwd) {
-      brakeF = 0;
-      if (this.vx > -11) reverseF = -input.brake * 3600; // ~40 km/h max en marche arrière
-    }
-    if (input.throttle > 0 && movingBack) { // on accélère alors qu'on recule : freine d'abord
-      driveF = 0; brakeF = Math.max(brakeF, input.throttle * p.brakeForceMax * 0.8);
-    }
-
-    var brakeSign = movingFwd ? -1 : (movingBack ? 1 : 0);
-    var FxF_want = brakeSign * brakeF * p.brakeBias;
-    var FxR_want = driveF + reverseF + brakeSign * brakeF * (1 - p.brakeBias);
-
-    var muR = mu, hb = !!input.handbrake;
-    if (hb) {
-      muR *= 0.55; // roues arrière bloquées → glisse
-      if (movingFwd) FxR_want -= p.handbrakeForce;
-    }
 
     // --- Angles de dérive ---
     var vxSafe = Math.max(1.2, vAbs);
     var alphaF = Math.atan2(this.vy + p.a * this.r, vxSafe) - delta * (this.vx >= 0 ? 1 : -1);
     var alphaR = Math.atan2(this.vy - p.b * this.r, vxSafe);
 
-    // --- Forces pneus (saturation douce + ellipse de friction) ---
-    var FyF_max = mu * FzF, FyR_maxBase = muR * FzR;
-    // capacité longitudinale consommée à l'arrière
-    var FxR = Math.max(-muR * FzR, Math.min(muR * FzR, FxR_want));
-    var FyR_max = FyR_maxBase * Math.sqrt(Math.max(0.08, 1 - (FxR / (muR * FzR)) * (FxR / (muR * FzR))));
-    var FxF = Math.max(-mu * FzF, Math.min(mu * FzF, FxF_want));
-    var FyF_cap = FyF_max * Math.sqrt(Math.max(0.08, 1 - (FxF / (mu * FzF)) * (FxF / (mu * FzF))));
+    // --- Demandes longitudinales ---
+    var driveF = 0;
+    if (input.throttle > 0) {
+      var vForP = Math.max(4, this.vx);
+      driveF = input.throttle * Math.min(p.engineForceMax, p.power / vForP);
+    }
+    var brakeF = input.brake * p.brakeForceMax;
+    var movingFwd = this.vx > 0.3, movingBack = this.vx < -0.3;
 
+    var reverseF = 0;
+    if (input.brake > 0 && !movingFwd) {
+      brakeF = 0;
+      if (this.vx > -13) reverseF = -input.brake * 5200; // marche arrière moderne
+    }
+    if (input.throttle > 0 && movingBack) {
+      driveF = 0; brakeF = Math.max(brakeF, input.throttle * p.brakeForceMax * 0.8);
+    }
+
+    var muR = hb ? mu * 0.55 : mu;
+
+    // --- TC (antipatinage) : ne demander à l'arrière que ce qu'il peut donner ---
+    if (aids && driveF > 0 && vAbs > 1) {
+      var FyR_demand = Math.min(p.cornerStiffR * Math.abs(alphaR), 0.96 * mu * FzR);
+      var reserve = Math.sqrt(Math.max(0, (mu * FzR) * (mu * FzR) - FyR_demand * FyR_demand));
+      driveF = Math.min(driveF, reserve);
+      // coupe d'allumage si l'arrière dérive trop
+      if (Math.abs(alphaR) > p.tcSlipStart) {
+        driveF *= Math.max(0.2, 1 - (Math.abs(alphaR) - p.tcSlipStart) * 6);
+      }
+    }
+
+    var brakeSign = movingFwd ? -1 : (movingBack ? 1 : 0);
+    var FxF_want = brakeSign * brakeF * p.brakeBias;
+    var FxR_want = driveF + reverseF + brakeSign * brakeF * (1 - p.brakeBias);
+    if (hb && movingFwd) FxR_want -= p.handbrakeForce;
+
+    // --- ABS : l'avant garde toujours de quoi diriger ---
+    var FxF_cap = mu * FzF * (aids ? p.absFrontReserve : 1);
+    var FxF = Math.max(-FxF_cap, Math.min(FxF_cap, FxF_want));
+    var FxR = Math.max(-muR * FzR * 0.96, Math.min(muR * FzR * 0.96, FxR_want));
+
+    // --- Pneus latéraux : saturation douce + ellipse de friction ---
+    var FyF_cap = mu * FzF * Math.sqrt(Math.max(0.10, 1 - (FxF / (mu * FzF)) * (FxF / (mu * FzF))));
+    var FyR_cap = muR * FzR * Math.sqrt(Math.max(0.10, 1 - (FxR / (muR * FzR)) * (FxR / (muR * FzR))));
     var FyF = -p.cornerStiffF * alphaF;
     FyF = FyF_cap * Math.tanh(FyF / Math.max(1, FyF_cap));
     var FyR = -p.cornerStiffR * alphaR;
-    FyR = FyR_max * Math.tanh(FyR / Math.max(1, FyR_max));
+    FyR = FyR_cap * Math.tanh(FyR / Math.max(1, FyR_cap));
 
-    // indicateur de glisse pour le son / HUD
+    // indicateur de glisse (son / HUD)
     var slipF = Math.abs(alphaF) > 0.12 ? 1 : 0, slipR = Math.abs(alphaR) > 0.10 ? 1 : 0;
     this.slipping += ((slipF + slipR) * 0.5 * (vAbs > 4 ? 1 : 0) - this.slipping) * Math.min(1, dt * 6);
 
@@ -659,11 +681,20 @@
     var drag = p.dragCoef * surface.dragMult * this.vx * Math.abs(this.vx);
     var roll = p.rollCoef * surface.rollMult * (this.vx > 0.2 ? 1 : (this.vx < -0.2 ? -1 : this.vx / 0.2));
 
-    // --- Dynamique (modèle bicyclette) ---
+    // --- Bilan des forces (modèle bicyclette) ---
     var cosd = Math.cos(delta), sind = Math.sin(delta);
     var Fx = FxR + FxF * cosd - FyF * sind - drag - roll;
     var Fy = FyF * cosd + FxF * sind + FyR;
     var Mz = p.a * (FyF * cosd + FxF * sind) - p.b * FyR;
+
+    // --- ESP : couple de lacet correcteur vers la rotation « saine » ---
+    if (aids && vAbs > 3) {
+      var rRef = this.vx * Math.tan(delta) / wheelbase;
+      var rCap = muEff * G / Math.max(vAbs, 3); // rotation max physiquement utile
+      rRef = Math.max(-rCap, Math.min(rCap, rRef));
+      var espGain = Math.min(1, (vAbs - 3) / 5);
+      Mz += p.espYawGain * (rRef - this.r) * espGain;
+    }
 
     var ax = Fx / m + this.r * this.vy;
     var ay = Fy / m - this.r * this.vx;
@@ -674,7 +705,7 @@
     this.r += rdot * dt;
 
     // --- Fusion basse vitesse : modèle cinématique (stable et maniable) ---
-    var kin = 1 - Math.min(1, Math.max(0, (vAbs - 1.5) / 3.0)); // 1 en dessous de 1,5 m/s
+    var kin = 1 - Math.min(1, Math.max(0, (vAbs - 1.5) / 3.0));
     if (kin > 0) {
       var rKin = this.vx * Math.tan(delta) / wheelbase;
       var beta = Math.atan(p.b * Math.tan(delta) / wheelbase);
@@ -683,7 +714,7 @@
       this.vy = this.vy * (1 - kin) + vyKin * kin;
     }
 
-    // Immobilisation propre (pas de reptation numérique)
+    // Immobilisation propre
     if (Math.abs(this.vx) < 0.15 && input.throttle === 0 && input.brake === 0) {
       this.vx *= Math.max(0, 1 - 8 * dt);
     }
@@ -697,21 +728,18 @@
     while (this.heading > Math.PI) this.heading -= 2 * Math.PI;
     while (this.heading < -Math.PI) this.heading += 2 * Math.PI;
 
-    this.wheelSpin += (this.vx / 0.34) * dt; // rayon de roue 34 cm
+    this.wheelSpin += (this.vx / 0.35) * dt;
   };
 
-  /* Impulsion appliquée en un point du monde (collisions).
-     (px,py) point d'application, (jx,jy) impulsion en N·s, repère monde. */
+  /* Impulsion appliquée en un point du monde (collisions). */
   CarPhysics.prototype.applyImpulse = function (px, py, jx, jy) {
     var p = this.p;
     var c = Math.cos(this.heading), s = Math.sin(this.heading);
-    // vitesse monde
     var wx = this.vx * c - this.vy * s;
     var wy = this.vx * s + this.vy * c;
     wx += jx / p.mass; wy += jy / p.mass;
     var armX = px - this.x, armY = py - this.y;
     this.r += (armX * jy - armY * jx) / p.inertia;
-    // retour repère voiture
     this.vx = wx * c + wy * s;
     this.vy = -wx * s + wy * c;
   };
@@ -1082,6 +1110,54 @@
     return tx;
   }
 
+  /* Dalles de béton d'aérodrome : 2×2 dalles par tuile, joints sombres,
+     teinte légèrement différente par dalle + mouchetis. */
+  function makeConcreteTexture() {
+    var size = 256;
+    var cv = document.createElement('canvas');
+    cv.width = cv.height = size;
+    var ctx = cv.getContext('2d');
+    var tints = ['#a8a9a1', '#9fa099', '#b0b1a9', '#a4a59e'];
+    for (var sy = 0; sy < 2; sy++) {
+      for (var sx = 0; sx < 2; sx++) {
+        ctx.fillStyle = tints[(sx + sy * 2)];
+        ctx.fillRect(sx * 128, sy * 128, 128, 128);
+      }
+    }
+    // mouchetis + taches d'usure
+    for (var i = 0; i < 900; i++) {
+      var g = 120 + Math.floor(Math.random() * 90);
+      ctx.fillStyle = 'rgb(' + g + ',' + g + ',' + (g - 4) + ')';
+      ctx.globalAlpha = 0.10 + Math.random() * 0.16;
+      var r = 0.6 + Math.random() * 2.2;
+      ctx.beginPath();
+      ctx.arc(Math.random() * size, Math.random() * size, r, 0, 7);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 0.10;
+    for (var st = 0; st < 8; st++) {
+      ctx.fillStyle = '#6e6f68';
+      ctx.beginPath();
+      ctx.ellipse(Math.random() * size, Math.random() * size, 12 + Math.random() * 26, 5 + Math.random() * 9, Math.random() * 3, 0, 7);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    // joints entre dalles
+    ctx.strokeStyle = '#6f7069';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(0, 128); ctx.lineTo(size, 128);
+    ctx.moveTo(128, 0); ctx.lineTo(128, size);
+    ctx.stroke();
+    ctx.strokeStyle = '#7d7e76';
+    ctx.lineWidth = 5;
+    ctx.strokeRect(0, 0, size, size);
+    var tx = new THREE.CanvasTexture(cv);
+    tx.wrapS = tx.wrapT = THREE.RepeatWrapping;
+    tx.encoding = THREE.sRGBEncoding;
+    return tx;
+  }
+
   function makeTextTexture(text, w, h, fg, bg, border) {
     var cv = document.createElement('canvas');
     cv.width = w; cv.height = h;
@@ -1160,22 +1236,28 @@
   };
 
   /* --------------------- Ruban de piste --------------------- */
-  Renderer3D.prototype._ribbonGeometry = function (latA, latB, y) {
-    // bande entre deux décalages latéraux (gauche +), boucle fermée
+  /* Bande entre deux décalages latéraux (gauche +).
+     Sans i0/i1 : boucle fermée complète. Avec i0/i1 : tronçon ouvert
+     (utilisé pour les dalles de béton des pistes d'envol). */
+  Renderer3D.prototype._ribbonGeometry = function (latA, latB, y, i0, i1, uScale) {
     var samples = this.track.samples, n = samples.length;
-    var pos = new Float32Array((n + 1) * 2 * 3);
-    var uv = new Float32Array((n + 1) * 2 * 2);
+    var closed = (i0 === undefined);
+    var count = closed ? n + 1 : (i1 - i0 + 1);
+    uScale = uScale || 8;
+    var pos = new Float32Array(count * 2 * 3);
+    var uv = new Float32Array(count * 2 * 2);
     var idx = [];
-    for (var i = 0; i <= n; i++) {
-      var sp = samples[i % n];
+    var s0 = closed ? 0 : samples[i0].s;
+    for (var k = 0; k < count; k++) {
+      var sp = closed ? samples[k % n] : samples[i0 + k];
       var nx = -Math.sin(sp.heading), ny = Math.cos(sp.heading);
-      var o = i * 6;
+      var o = k * 6;
       pos[o] = sp.x + nx * latA; pos[o + 1] = y; pos[o + 2] = -(sp.y + ny * latA);
       pos[o + 3] = sp.x + nx * latB; pos[o + 4] = y; pos[o + 5] = -(sp.y + ny * latB);
-      var u = (i === n ? this.track.S : sp.s) / 8;
-      uv[i * 4] = u; uv[i * 4 + 1] = 0; uv[i * 4 + 2] = u; uv[i * 4 + 3] = 1;
-      if (i < n) {
-        var a = i * 2, b = i * 2 + 1, c = i * 2 + 2, d = i * 2 + 3;
+      var u = ((closed && k === n ? this.track.S : sp.s) - s0) / uScale;
+      uv[k * 4] = u; uv[k * 4 + 1] = 0; uv[k * 4 + 2] = u; uv[k * 4 + 3] = 1;
+      if (k < count - 1) {
+        var a = k * 2, b = k * 2 + 1, c = k * 2 + 2, d = k * 2 + 3;
         idx.push(a, b, c, b, d, c);
       }
     }
@@ -1195,6 +1277,22 @@
     var mesh = new THREE.Mesh(this._ribbonGeometry(W / 2, -W / 2, 0), mat);
     mesh.receiveShadow = true;
     this.scene.add(mesh);
+
+    // Pistes d'envol en dalles de béton : Copse → Seagrave et Stowe → Seaman
+    // (anciennes runways de la RAF ; dalles ~7 m avec joints visibles)
+    var meta = this.track.cornerMeta;
+    var concMat = new THREE.MeshLambertMaterial({ map: makeConcreteTexture() });
+    var runways = [
+      [meta[1].exitIdx, meta[2].exitIdx],  // sortie de Copse → fin du virage Seagrave
+      [meta[6].exitIdx, meta[7].exitIdx]   // sortie de Stowe → fin du virage Seaman
+    ];
+    for (var rw = 0; rw < runways.length; rw++) {
+      var rMesh = new THREE.Mesh(
+        this._ribbonGeometry(W / 2, -W / 2, 0.012, runways[rw][0], runways[rw][1], 14),
+        concMat);
+      rMesh.receiveShadow = true;
+      this.scene.add(rMesh);
+    }
 
     var lineMat = new THREE.MeshBasicMaterial({ color: 0xe8e6e0 });
     var l1 = new THREE.Mesh(this._ribbonGeometry(W / 2 - 0.25, W / 2 - 0.65, 0.02), lineMat);
@@ -1332,108 +1430,158 @@
     this.scene.add(ti); this.scene.add(ci);
   };
 
-  /* --------------------- Voiture --------------------- */
+  /* --------------------- Voiture (monoplace moderne) --------------------- */
   Renderer3D.prototype._buildCar = function () {
     var car = this.carGroup = new THREE.Group();
     var body = this.carBody = new THREE.Group();
     car.add(body);
 
-    var red = new THREE.MeshPhongMaterial({ color: 0xc0281c, shininess: 55, specular: 0x664444 });
-    var dark = new THREE.MeshPhongMaterial({ color: 0x1c1c1e, shininess: 30 });
+    var red = new THREE.MeshPhongMaterial({ color: 0xc8241a, shininess: 70, specular: 0x774444 });
+    var dark = new THREE.MeshPhongMaterial({ color: 0x17171a, shininess: 35 });
+    var carbon = new THREE.MeshPhongMaterial({ color: 0x26262b, shininess: 60, specular: 0x555560 });
     var silver = new THREE.MeshPhongMaterial({ color: 0xb9bcc2, shininess: 90, specular: 0x888888 });
 
-    // fuselage « cigare »
-    var hull = new THREE.Mesh(new THREE.CapsuleGeometry(0.44, 3.0, 6, 14), red);
-    hull.rotation.z = Math.PI / 2;
-    hull.position.set(0.05, 0.58, 0);
-    hull.scale.set(1, 0.78, 0.92);
-    hull.castShadow = true;
-    body.add(hull);
+    // fond plat
+    var floor = new THREE.Mesh(new THREE.BoxGeometry(3.55, 0.08, 1.45), carbon);
+    floor.position.set(0.05, 0.16, 0);
+    body.add(floor);
 
-    // nez conique
-    var nose = new THREE.Mesh(new THREE.ConeGeometry(0.34, 0.85, 14), red);
+    // monocoque centrale
+    var mono = new THREE.Mesh(new THREE.BoxGeometry(1.85, 0.44, 0.80), red);
+    mono.position.set(0.15, 0.44, 0);
+    mono.castShadow = true;
+    body.add(mono);
+
+    // museau plongeant (pyramide écrasée)
+    var nose = new THREE.Mesh(new THREE.ConeGeometry(0.40, 1.45, 4), red);
     nose.rotation.z = -Math.PI / 2;
-    nose.position.set(2.15, 0.54, 0);
+    nose.rotation.x = Math.PI / 4;
+    nose.position.set(1.80, 0.38, 0);
+    nose.scale.set(1, 1, 0.62); // aplati en hauteur
     nose.castShadow = true;
     body.add(nose);
 
-    // calandre
-    var grille = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.26, 0.1, 14), dark);
-    grille.rotation.z = Math.PI / 2;
-    grille.position.set(2.22, 0.52, 0);
-    body.add(grille);
+    // aileron avant + dérives
+    var fwing = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.05, 1.90), carbon);
+    fwing.position.set(2.18, 0.14, 0);
+    fwing.castShadow = true;
+    body.add(fwing);
+    for (var e = -1; e <= 1; e += 2) {
+      var fplate = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.20, 0.045), red);
+      fplate.position.set(2.18, 0.24, e * 0.95);
+      body.add(fplate);
+    }
 
-    // cockpit (rebord) + queue effilée
-    var cockpit = new THREE.Mesh(new THREE.TorusGeometry(0.30, 0.06, 8, 16), red);
-    cockpit.rotation.x = Math.PI / 2;
-    cockpit.position.set(-0.25, 0.92, 0);
-    body.add(cockpit);
-    var tail = new THREE.Mesh(new THREE.ConeGeometry(0.34, 1.15, 12), red);
-    tail.rotation.z = Math.PI / 2;
-    tail.position.set(-2.05, 0.56, 0);
-    tail.scale.set(1, 0.75, 0.9);
-    tail.castShadow = true;
-    body.add(tail);
+    // pontons latéraux
+    for (var pz = -1; pz <= 1; pz += 2) {
+      var pod = new THREE.Mesh(new THREE.BoxGeometry(1.55, 0.34, 0.44), red);
+      pod.position.set(-0.35, 0.38, pz * 0.62);
+      pod.castShadow = true;
+      body.add(pod);
+      var intake = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.26, 0.34), dark);
+      intake.position.set(0.43, 0.40, pz * 0.62);
+      body.add(intake);
+    }
 
-    // pilote : tête + casque cuir + lunettes
-    var head = new THREE.Mesh(new THREE.SphereGeometry(0.16, 10, 8),
-      new THREE.MeshLambertMaterial({ color: 0x9a6b46 }));
-    head.position.set(-0.25, 1.02, 0);
-    body.add(head);
-    var goggles = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.07, 0.24), dark);
-    goggles.position.set(-0.11, 1.05, 0);
-    body.add(goggles);
+    // capot moteur profilé + prise d'air
+    var spine = new THREE.Mesh(new THREE.CapsuleGeometry(0.24, 1.15, 5, 10), red);
+    spine.rotation.z = Math.PI / 2;
+    spine.position.set(-0.95, 0.62, 0);
+    spine.scale.set(1, 0.85, 0.8);
+    spine.castShadow = true;
+    body.add(spine);
+    var airbox = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.24, 0.30), red);
+    airbox.position.set(-0.42, 0.86, 0);
+    body.add(airbox);
 
-    // pare-brise saute-vent
-    var screen = new THREE.Mesh(new THREE.PlaneGeometry(0.46, 0.17),
-      new THREE.MeshPhongMaterial({ color: 0xcfe8ef, transparent: true, opacity: 0.55, side: THREE.DoubleSide }));
-    screen.position.set(0.26, 0.97, 0);
-    screen.rotation.z = -0.5;
-    screen.rotation.y = Math.PI / 2;
-    body.add(screen);
+    // casque moderne + halo de protection
+    var helmet = new THREE.Mesh(new THREE.SphereGeometry(0.155, 12, 10),
+      new THREE.MeshPhongMaterial({ color: 0xf2f0e8, shininess: 80 }));
+    helmet.position.set(0.10, 0.78, 0);
+    body.add(helmet);
+    var visor = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.07, 0.20), dark);
+    visor.position.set(0.24, 0.80, 0);
+    body.add(visor);
+    var halo = new THREE.Mesh(new THREE.TorusGeometry(0.30, 0.035, 8, 14, Math.PI), carbon);
+    halo.rotation.x = -Math.PI / 2;
+    halo.rotation.z = Math.PI;
+    halo.position.set(0.10, 0.88, 0);
+    body.add(halo);
+    var haloPillar = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.05, 0.05), carbon);
+    haloPillar.rotation.z = 0.45;
+    haloPillar.position.set(0.30, 0.82, 0);
+    body.add(haloPillar);
 
-    // échappement
-    var pipe = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 2.4, 8), silver);
-    pipe.rotation.z = Math.PI / 2;
-    pipe.position.set(-0.7, 0.42, -0.55);
-    body.add(pipe);
+    // aileron arrière (plan principal + volet + dérives + pylône)
+    var rwing = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.045, 1.50), carbon);
+    rwing.position.set(-1.82, 0.92, 0);
+    rwing.rotation.z = 0.10;
+    rwing.castShadow = true;
+    body.add(rwing);
+    var rflap = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.04, 1.50), red);
+    rflap.position.set(-1.95, 1.04, 0);
+    rflap.rotation.z = 0.32;
+    body.add(rflap);
+    for (var re = -1; re <= 1; re += 2) {
+      var rplate = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.42, 0.045), red);
+      rplate.position.set(-1.86, 0.90, re * 0.75);
+      body.add(rplate);
+    }
+    var pylon = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.42, 0.07), carbon);
+    pylon.position.set(-1.80, 0.62, 0);
+    body.add(pylon);
 
-    // numéro sur le nez
-    var num = new THREE.Mesh(new THREE.CircleGeometry(0.24, 20),
+    // feu arrière (pluie)
+    var rainlight = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.10, 0.10),
+      new THREE.MeshBasicMaterial({ color: 0xff2222 }));
+    rainlight.position.set(-2.02, 0.42, 0);
+    body.add(rainlight);
+
+    // numéro sur le museau
+    var num = new THREE.Mesh(new THREE.CircleGeometry(0.22, 20),
       new THREE.MeshBasicMaterial({ map: makeTextTexture('1', 96, 96, '#111', '#f5f2e8') }));
     num.rotation.x = -Math.PI / 2;
-    num.position.set(1.30, 0.87, 0);
+    num.rotation.z = Math.PI / 2;
+    num.position.set(1.15, 0.60, 0);
     body.add(num);
 
-    // roues : groupe de direction (yaw) → groupe de rotation (axe Z)
-    var wheelGeo = new THREE.CylinderGeometry(0.34, 0.34, 0.2, 16);
-    var spokeGeo = new THREE.BoxGeometry(0.5, 0.05, 0.04);
-    var hubMat = new THREE.MeshPhongMaterial({ color: 0xd8d5c8, shininess: 80 });
+    // roues larges : groupe de direction (yaw) → groupe de rotation (axe Z)
+    var wheelGeoF = new THREE.CylinderGeometry(0.35, 0.35, 0.30, 18);
+    var wheelGeoR = new THREE.CylinderGeometry(0.36, 0.36, 0.34, 18);
+    var rimGeoF = new THREE.CylinderGeometry(0.21, 0.21, 0.31, 14);
+    var rimGeoR = new THREE.CylinderGeometry(0.22, 0.22, 0.35, 14);
+    var rimMat = new THREE.MeshPhongMaterial({ color: 0x8f9298, shininess: 100, specular: 0x999999 });
+    var spokeGeo = new THREE.BoxGeometry(0.40, 0.05, 0.05);
     this.wheels = [];
     var defs = [
-      { x: 1.30, z: 0.66, steer: true }, { x: 1.30, z: -0.66, steer: true },
-      { x: -1.30, z: 0.70, steer: false }, { x: -1.30, z: -0.70, steer: false }
+      { x: 1.32, z: 0.76, steer: true, front: true }, { x: 1.32, z: -0.76, steer: true, front: true },
+      { x: -1.35, z: 0.79, steer: false, front: false }, { x: -1.35, z: -0.79, steer: false, front: false }
     ];
     for (var i = 0; i < defs.length; i++) {
       var d = defs[i];
       var steerG = new THREE.Group();
-      steerG.position.set(d.x, 0.34, d.z);
+      steerG.position.set(d.x, 0.35, d.z);
       var spinG = new THREE.Group();
-      var tire = new THREE.Mesh(wheelGeo, dark);
+      var tire = new THREE.Mesh(d.front ? wheelGeoF : wheelGeoR, dark);
       tire.rotation.x = Math.PI / 2;
       tire.castShadow = true;
       spinG.add(tire);
+      var rim = new THREE.Mesh(d.front ? rimGeoF : rimGeoR, rimMat);
+      rim.rotation.x = Math.PI / 2;
+      rim.scale.set(1, 1.02, 1);
+      spinG.add(rim);
       for (var sp = 0; sp < 3; sp++) {
-        var spoke = new THREE.Mesh(spokeGeo, hubMat);
+        var spoke = new THREE.Mesh(spokeGeo, carbon);
         spoke.rotation.z = sp * Math.PI / 3;
+        spoke.position.z = (d.front ? 0.165 : 0.185) * (d.z > 0 ? 1 : -1);
         spinG.add(spoke);
       }
       steerG.add(spinG);
       car.add(steerG);
       this.wheels.push({ steerG: steerG, spinG: spinG, steer: d.steer });
-      // petit bras de suspension
-      var arm = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.06, Math.abs(d.z)), silver);
-      arm.position.set(d.x, 0.38, d.z / 2);
+      // triangles de suspension
+      var arm = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.05, Math.abs(d.z) - 0.35), carbon);
+      arm.position.set(d.x, 0.36, d.z / 2);
       car.add(arm);
     }
 

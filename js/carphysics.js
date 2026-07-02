@@ -1,10 +1,12 @@
 /* ============================================================
    Physique voiture — modèle bicyclette dynamique (module pur).
-   Monoplace type Grand Prix 1948 (~750 kg, ~150 kW, propulsion).
+   VOITURE MODERNE : châssis rigide, pneus à forte adhérence,
+   appui aérodynamique, et aides électroniques :
+     - TC  (antipatinage : le couple est limité à l'adhérence restante)
+     - ABS (le freinage préserve toujours de quoi diriger)
+     - ESP (couple de lacet correcteur : la voiture ne part pas en toupie)
+   Le frein à main (Espace) débranche TC + ESP pour glisser volontairement.
    Repère voiture : x vers l'avant, y vers la gauche, lacet CCW+.
-   Forces : moteur (limité par la puissance ET l'adhérence),
-   freins, pneus latéraux saturés (ellipse de friction),
-   traînée aérodynamique, résistance au roulement.
    ============================================================ */
 (function (global) {
   'use strict';
@@ -12,27 +14,33 @@
   var G = 9.81;
 
   var PARAMS = {
-    mass: 750,          // kg
-    inertia: 900,       // kg·m² (lacet)
-    a: 1.30,            // distance CG → essieu avant (m)
-    b: 1.30,            // distance CG → essieu arrière (m)
-    halfWidth: 0.80,    // demi-largeur (m)
-    power: 165e3,       // W (~225 ch, monoplace GP fin des années 40)
-    engineForceMax: 6800,  // N (limite basse vitesse)
-    brakeForceMax: 10500,  // N (total)
-    brakeBias: 0.58,       // proportion avant
-    handbrakeForce: 5200,  // N (arrière)
-    cornerStiffF: 62000,   // N/rad (essieu avant)
-    cornerStiffR: 68000,   // N/rad (essieu arrière)
-    muTrack: 1.05,
-    muGrass: 0.52,
-    dragCoef: 0.70,        // ½ρCdA
-    rollCoef: 220,         // N à v>0 (piste)
+    mass: 720,          // kg (sportive légère moderne)
+    inertia: 850,       // kg·m² (lacet)
+    a: 1.24,            // distance CG → essieu avant (m)
+    b: 1.36,            // CG légèrement avancé → stable (sous-vireur)
+    halfWidth: 0.85,
+    power: 285e3,          // W (~390 ch)
+    engineForceMax: 9800,  // N (limite basse vitesse)
+    brakeForceMax: 16500,  // N (total)
+    brakeBias: 0.62,       // proportion avant
+    handbrakeForce: 6200,  // N (arrière)
+    cornerStiffF: 96000,   // N/rad (essieu avant, pneus modernes)
+    cornerStiffR: 118000,  // N/rad (essieu arrière)
+    muTrack: 1.30,
+    muGrass: 0.55,
+    downforceCoef: 1.15,   // N/(m/s)² d'appui aéro total (~3,3 kN à 190 km/h)
+    downBalanceF: 0.42,    // part de l'appui sur l'essieu avant
+    dragCoef: 0.78,        // ½ρCdA
+    rollCoef: 260,
     rollGrassMult: 4.0,
     dragGrassMult: 3.0,
-    steerMax: 0.55,        // rad (~31°) à l'arrêt
-    steerRate: 3.2,        // rad/s (vitesse du volant)
-    steerLatG: 1.35        // limite de braquage : δmax tel que a_lat ≈ 1.35·μ·g
+    steerMax: 0.52,        // rad (~30°) à l'arrêt
+    steerRate: 4.6,        // rad/s vers la consigne
+    steerReturnMult: 1.7,  // retour au centre plus rapide
+    steerLatG: 1.10,       // limite de braquage utile (fraction du potentiel)
+    espYawGain: 3200,      // N·m par rad/s d'écart de lacet
+    tcSlipStart: 0.12,     // rad : l'antipatinage coupe au-delà de cette dérive arrière
+    absFrontReserve: 0.90  // l'ABS garde ≥ √(1-0.9²) ≈ 44 % du potentiel avant pour tourner
   };
 
   function CarPhysics(opts) {
@@ -44,11 +52,11 @@
 
   CarPhysics.prototype.reset = function (x, y, heading) {
     this.x = x; this.y = y; this.heading = heading;
-    this.vx = 0; this.vy = 0; this.r = 0;   // vitesses repère voiture + vitesse de lacet
-    this.steer = 0;                          // braquage actuel (rad)
+    this.vx = 0; this.vy = 0; this.r = 0;
+    this.steer = 0;
     this.throttle = 0; this.brake = 0;
-    this.wheelSpin = 0;                      // pour l'animation des roues
-    this.slipping = 0;                       // indicateur de glisse (0..1)
+    this.wheelSpin = 0;
+    this.slipping = 0;
   };
 
   CarPhysics.prototype.speed = function () {
@@ -60,76 +68,89 @@
   CarPhysics.prototype.step = function (dt, input, surface) {
     var p = this.p;
     var mu = surface.mu;
-
-    // --- Volant : consigne limitée par la vitesse (anti-tête-à-queue clavier) ---
-    var vAbs = Math.abs(this.vx);
+    var m = p.mass;
     var wheelbase = p.a + p.b;
+    var vAbs = Math.abs(this.vx);
+    var hb = !!input.handbrake;
+    var aids = !hb; // Espace : mode glisse, aides débranchées
+
+    // --- Appui aérodynamique : plus on va vite, plus on colle ---
+    var down = p.downforceCoef * this.vx * this.vx;
+    var FzF = m * G * p.b / wheelbase + down * p.downBalanceF;
+    var FzR = m * G * p.a / wheelbase + down * (1 - p.downBalanceF);
+    var muEff = mu * (1 + down / (m * G)); // potentiel latéral global
+
+    // --- Volant : consigne limitée par la vitesse (inclut l'appui aéro) ---
     var steerLimit = p.steerMax;
     if (vAbs > 4) {
-      var byLatG = Math.atan(p.steerLatG * mu * G * wheelbase / (this.vx * this.vx));
-      steerLimit = Math.min(p.steerMax, Math.max(0.06, byLatG));
+      var byLatG = Math.atan(p.steerLatG * muEff * G * wheelbase / (this.vx * this.vx));
+      steerLimit = Math.min(p.steerMax, Math.max(0.05, byLatG));
     }
     var target = Math.max(-1, Math.min(1, input.steer)) * steerLimit;
     var dSteer = target - this.steer;
-    var maxD = p.steerRate * dt;
+    var rate = p.steerRate;
+    if (target === 0 || target * this.steer < 0) rate *= p.steerReturnMult;
+    var maxD = rate * dt;
     this.steer += Math.max(-maxD, Math.min(maxD, dSteer));
 
     var delta = this.steer;
     this.throttle = input.throttle; this.brake = input.brake;
-
-    // --- Charges verticales statiques ---
-    var m = p.mass;
-    var FzF = m * G * p.b / wheelbase;
-    var FzR = m * G * p.a / wheelbase;
-
-    // --- Forces longitudinales demandées ---
-    var driveF = 0;
-    if (input.throttle > 0) {
-      var vForP = Math.max(3, this.vx);
-      driveF = input.throttle * Math.min(p.engineForceMax, p.power / vForP);
-    }
-    var brakeF = input.brake * p.brakeForceMax;
-    var movingFwd = this.vx > 0.3, movingBack = this.vx < -0.3;
-
-    // Marche arrière : frein → propulsion arrière limitée quand on est arrêté
-    var reverseF = 0;
-    if (input.brake > 0 && !movingFwd) {
-      brakeF = 0;
-      if (this.vx > -11) reverseF = -input.brake * 3600; // ~40 km/h max en marche arrière
-    }
-    if (input.throttle > 0 && movingBack) { // on accélère alors qu'on recule : freine d'abord
-      driveF = 0; brakeF = Math.max(brakeF, input.throttle * p.brakeForceMax * 0.8);
-    }
-
-    var brakeSign = movingFwd ? -1 : (movingBack ? 1 : 0);
-    var FxF_want = brakeSign * brakeF * p.brakeBias;
-    var FxR_want = driveF + reverseF + brakeSign * brakeF * (1 - p.brakeBias);
-
-    var muR = mu, hb = !!input.handbrake;
-    if (hb) {
-      muR *= 0.55; // roues arrière bloquées → glisse
-      if (movingFwd) FxR_want -= p.handbrakeForce;
-    }
 
     // --- Angles de dérive ---
     var vxSafe = Math.max(1.2, vAbs);
     var alphaF = Math.atan2(this.vy + p.a * this.r, vxSafe) - delta * (this.vx >= 0 ? 1 : -1);
     var alphaR = Math.atan2(this.vy - p.b * this.r, vxSafe);
 
-    // --- Forces pneus (saturation douce + ellipse de friction) ---
-    var FyF_max = mu * FzF, FyR_maxBase = muR * FzR;
-    // capacité longitudinale consommée à l'arrière
-    var FxR = Math.max(-muR * FzR, Math.min(muR * FzR, FxR_want));
-    var FyR_max = FyR_maxBase * Math.sqrt(Math.max(0.08, 1 - (FxR / (muR * FzR)) * (FxR / (muR * FzR))));
-    var FxF = Math.max(-mu * FzF, Math.min(mu * FzF, FxF_want));
-    var FyF_cap = FyF_max * Math.sqrt(Math.max(0.08, 1 - (FxF / (mu * FzF)) * (FxF / (mu * FzF))));
+    // --- Demandes longitudinales ---
+    var driveF = 0;
+    if (input.throttle > 0) {
+      var vForP = Math.max(4, this.vx);
+      driveF = input.throttle * Math.min(p.engineForceMax, p.power / vForP);
+    }
+    var brakeF = input.brake * p.brakeForceMax;
+    var movingFwd = this.vx > 0.3, movingBack = this.vx < -0.3;
 
+    var reverseF = 0;
+    if (input.brake > 0 && !movingFwd) {
+      brakeF = 0;
+      if (this.vx > -13) reverseF = -input.brake * 5200; // marche arrière moderne
+    }
+    if (input.throttle > 0 && movingBack) {
+      driveF = 0; brakeF = Math.max(brakeF, input.throttle * p.brakeForceMax * 0.8);
+    }
+
+    var muR = hb ? mu * 0.55 : mu;
+
+    // --- TC (antipatinage) : ne demander à l'arrière que ce qu'il peut donner ---
+    if (aids && driveF > 0 && vAbs > 1) {
+      var FyR_demand = Math.min(p.cornerStiffR * Math.abs(alphaR), 0.96 * mu * FzR);
+      var reserve = Math.sqrt(Math.max(0, (mu * FzR) * (mu * FzR) - FyR_demand * FyR_demand));
+      driveF = Math.min(driveF, reserve);
+      // coupe d'allumage si l'arrière dérive trop
+      if (Math.abs(alphaR) > p.tcSlipStart) {
+        driveF *= Math.max(0.2, 1 - (Math.abs(alphaR) - p.tcSlipStart) * 6);
+      }
+    }
+
+    var brakeSign = movingFwd ? -1 : (movingBack ? 1 : 0);
+    var FxF_want = brakeSign * brakeF * p.brakeBias;
+    var FxR_want = driveF + reverseF + brakeSign * brakeF * (1 - p.brakeBias);
+    if (hb && movingFwd) FxR_want -= p.handbrakeForce;
+
+    // --- ABS : l'avant garde toujours de quoi diriger ---
+    var FxF_cap = mu * FzF * (aids ? p.absFrontReserve : 1);
+    var FxF = Math.max(-FxF_cap, Math.min(FxF_cap, FxF_want));
+    var FxR = Math.max(-muR * FzR * 0.96, Math.min(muR * FzR * 0.96, FxR_want));
+
+    // --- Pneus latéraux : saturation douce + ellipse de friction ---
+    var FyF_cap = mu * FzF * Math.sqrt(Math.max(0.10, 1 - (FxF / (mu * FzF)) * (FxF / (mu * FzF))));
+    var FyR_cap = muR * FzR * Math.sqrt(Math.max(0.10, 1 - (FxR / (muR * FzR)) * (FxR / (muR * FzR))));
     var FyF = -p.cornerStiffF * alphaF;
     FyF = FyF_cap * Math.tanh(FyF / Math.max(1, FyF_cap));
     var FyR = -p.cornerStiffR * alphaR;
-    FyR = FyR_max * Math.tanh(FyR / Math.max(1, FyR_max));
+    FyR = FyR_cap * Math.tanh(FyR / Math.max(1, FyR_cap));
 
-    // indicateur de glisse pour le son / HUD
+    // indicateur de glisse (son / HUD)
     var slipF = Math.abs(alphaF) > 0.12 ? 1 : 0, slipR = Math.abs(alphaR) > 0.10 ? 1 : 0;
     this.slipping += ((slipF + slipR) * 0.5 * (vAbs > 4 ? 1 : 0) - this.slipping) * Math.min(1, dt * 6);
 
@@ -137,11 +158,20 @@
     var drag = p.dragCoef * surface.dragMult * this.vx * Math.abs(this.vx);
     var roll = p.rollCoef * surface.rollMult * (this.vx > 0.2 ? 1 : (this.vx < -0.2 ? -1 : this.vx / 0.2));
 
-    // --- Dynamique (modèle bicyclette) ---
+    // --- Bilan des forces (modèle bicyclette) ---
     var cosd = Math.cos(delta), sind = Math.sin(delta);
     var Fx = FxR + FxF * cosd - FyF * sind - drag - roll;
     var Fy = FyF * cosd + FxF * sind + FyR;
     var Mz = p.a * (FyF * cosd + FxF * sind) - p.b * FyR;
+
+    // --- ESP : couple de lacet correcteur vers la rotation « saine » ---
+    if (aids && vAbs > 3) {
+      var rRef = this.vx * Math.tan(delta) / wheelbase;
+      var rCap = muEff * G / Math.max(vAbs, 3); // rotation max physiquement utile
+      rRef = Math.max(-rCap, Math.min(rCap, rRef));
+      var espGain = Math.min(1, (vAbs - 3) / 5);
+      Mz += p.espYawGain * (rRef - this.r) * espGain;
+    }
 
     var ax = Fx / m + this.r * this.vy;
     var ay = Fy / m - this.r * this.vx;
@@ -152,7 +182,7 @@
     this.r += rdot * dt;
 
     // --- Fusion basse vitesse : modèle cinématique (stable et maniable) ---
-    var kin = 1 - Math.min(1, Math.max(0, (vAbs - 1.5) / 3.0)); // 1 en dessous de 1,5 m/s
+    var kin = 1 - Math.min(1, Math.max(0, (vAbs - 1.5) / 3.0));
     if (kin > 0) {
       var rKin = this.vx * Math.tan(delta) / wheelbase;
       var beta = Math.atan(p.b * Math.tan(delta) / wheelbase);
@@ -161,7 +191,7 @@
       this.vy = this.vy * (1 - kin) + vyKin * kin;
     }
 
-    // Immobilisation propre (pas de reptation numérique)
+    // Immobilisation propre
     if (Math.abs(this.vx) < 0.15 && input.throttle === 0 && input.brake === 0) {
       this.vx *= Math.max(0, 1 - 8 * dt);
     }
@@ -175,21 +205,18 @@
     while (this.heading > Math.PI) this.heading -= 2 * Math.PI;
     while (this.heading < -Math.PI) this.heading += 2 * Math.PI;
 
-    this.wheelSpin += (this.vx / 0.34) * dt; // rayon de roue 34 cm
+    this.wheelSpin += (this.vx / 0.35) * dt;
   };
 
-  /* Impulsion appliquée en un point du monde (collisions).
-     (px,py) point d'application, (jx,jy) impulsion en N·s, repère monde. */
+  /* Impulsion appliquée en un point du monde (collisions). */
   CarPhysics.prototype.applyImpulse = function (px, py, jx, jy) {
     var p = this.p;
     var c = Math.cos(this.heading), s = Math.sin(this.heading);
-    // vitesse monde
     var wx = this.vx * c - this.vy * s;
     var wy = this.vx * s + this.vy * c;
     wx += jx / p.mass; wy += jy / p.mass;
     var armX = px - this.x, armY = py - this.y;
     this.r += (armX * jy - armY * jx) / p.inertia;
-    // retour repère voiture
     this.vx = wx * c + wy * s;
     this.vy = -wx * s + wy * c;
   };
