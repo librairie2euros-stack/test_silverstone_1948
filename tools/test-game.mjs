@@ -111,9 +111,12 @@ console.log('\n=== Tests de stabilité (la voiture ne part pas dans tous les sen
   check(!spun && car4.vx > 12, 'Plein gaz en sortie d\'épingle : le TC tient l\'arrière', `${(car4.vx * 3.6).toFixed(0)} km/h en sortie`);
 }
 
-console.log('\n=== Test de jeu : tour complet en autopilote ===\n');
-{
-  const game = new Game();
+const TrackKit = require(path.join(root, 'js', 'trackdata.js'));
+
+for (const trackId of ['s1948', 's1950']) {
+  const track = TrackKit.buildTrack(trackId);
+  console.log(`\n=== Test de jeu : tour complet en autopilote — ${track.name} ===\n`);
+  const game = new Game({ track });
   game.autopilot = true;
   const maxSim = 420; // 7 min de marge
   let lapDone = false;
@@ -121,15 +124,16 @@ console.log('\n=== Test de jeu : tour complet en autopilote ===\n');
     game._fixedStep(FIXED_DT);
     if (game.lapCount >= 1) { lapDone = true; break; }
   }
+  const nCP = track.checkpoints.length;
   check(lapDone, 'Un tour complet bouclé par l\'autopilote');
   const cpEvents = game.events.filter(e => e.type === 'cp');
   const lapEvents = game.events.filter(e => e.type === 'lap');
-  check(cpEvents.length >= 10, 'Les 10 points de contrôle validés', cpEvents.map(e => e.name).join(' → '));
+  check(cpEvents.length >= nCP, `Les ${nCP} points de contrôle validés`, cpEvents.map(e => e.name).join(' → '));
   const lastLap = lapEvents[lapEvents.length - 1];
   check(lastLap && lastLap.valid === true, 'Tour validé (tous les CP avant la ligne)');
   if (lastLap && lastLap.valid) {
     console.log(`       Temps au tour (autopilote) : ${formatTime(lastLap.time)}`);
-    check(lastLap.time > 60 && lastLap.time < 300, 'Temps au tour plausible', formatTime(lastLap.time));
+    check(lastLap.time > 50 && lastLap.time < 300, 'Temps au tour plausible', formatTime(lastLap.time));
   }
   const hits = game.events.filter(e => e.type === 'hit');
   console.log(`       Collisions pendant le tour : ${hits.length}`);

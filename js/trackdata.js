@@ -1,18 +1,23 @@
 /* ============================================================
-   SILVERSTONE 1948 — géométrie du circuit (module pur, sans THREE)
+   SILVERSTONE — géométrie des circuits (module pur, sans THREE)
    Convention 2D : plan (x, y) mathématique, cap θ en radians,
    CCW positif = virage à GAUCHE.  En 3D : (x, 0, -y).
-   Les angles du cahier des charges sont les angles INTÉRIEURS
-   des virages : changement de cap = 180° - angle annoncé.
-   La somme des changements de cap fait exactement -360° (boucle
-   fermée dans le sens horaire).
+   `turn` = changement de cap signé en degrés (+ = gauche).
+   La somme des changements de cap fait -360° (boucle horaire).
+   Deux tracés :
+     - s1948 : circuit du RAC GP 1948, avec les deux pointes
+       rentrantes sur les pistes d'envol (Seagrave / Seaman).
+     - s1950 : circuit périmètre du premier GP de F1 (mai 1950) :
+       Copse → Maggotts direct (Maggotts devient un gauche),
+       Stowe → Club direct (deux droites simples), pointes disparues.
+   Le départ est identique : sur Farm Straight, après Abbey.
    ============================================================ */
 (function (global) {
   'use strict';
 
   var DEG = Math.PI / 180;
-  var SCALE = 0.72;          // échelle globale du circuit (1948 réel ~5,9 km)
-  var TRACK_W = 14;          // largeur de piste (m) — ancien aérodrome, piste large
+  var SCALE = 0.72;          // échelle globale (tracé 1948 réel ~5,9 km)
+  var TRACK_W = 14;          // largeur de piste (m)
   var SAMPLE_STEP = 2.5;     // pas d'échantillonnage de la ligne médiane (m)
 
   // Générateur pseudo-aléatoire déterministe (placement foin / arbres)
@@ -27,32 +32,62 @@
   }
 
   /* ------------------------------------------------------------
-     Spécification du tracé.
-     edges[i] : longueur (m, avant échelle) du segment droit i.
-     corners[i] : virage situé à la FIN du segment i.
-       turn : changement de cap signé (degrés, + = gauche/CCW)
-       r    : rayon du congé (m, avant échelle)
-       hay  : protection en bottes de foin sur l'extérieur
-     Ordre : départ sur Farm Straight (edge 0), premier virage Woodcote.
-     edge 6 = Hangar Straight.
+     Registre des circuits.
+     edges[i] : longueur (m, avant échelle) du segment droit i ;
+     corners[i] : virage à la FIN du segment i {turn, r, hay}.
+     barrier  : {a, b} indices des deux virages séparés par le mur
+                blanc + bottes de foin (1948 uniquement).
+     concrete : [{from, to}] plages de virages entre lesquelles le
+                sol est en dalles de béton (anciennes runways).
+     Le segment 0 est toujours Farm Straight (départ identique).
      ------------------------------------------------------------ */
-  var SPEC = {
-    edges: [544.2, 403.9, 620.0, 532.3, 280.0, 380.0, 850.0, 932.3, 520.0, 420.0],
-    edgeNames: ['Farm Straight', '', '', '', '', '', 'Hangar Straight', '', '', ''],
-    corners: [
-      { name: 'Woodcote', turn: -90, r: 55, hay: true },   // 90° à droite
-      { name: 'Copse', turn: -110, r: 45, hay: true },   // 70° à droite
-      { name: 'Seagrave', turn: 135, r: 22, hay: false },  // 45° à gauche (pointe nord)
-      { name: 'Maggotts', turn: -90, r: 50, hay: true },   // 90° à droite
-      { name: 'Becketts', turn: -90, r: 50, hay: true },   // 90° à droite
-      { name: 'Chapel', turn: 35, r: 120, hay: false },  // courbe à gauche (145°)
-      { name: 'Stowe', turn: -160, r: 20, hay: true },   // 20° à droite, bien serré
-      { name: 'Seaman', turn: 135, r: 22, hay: false },  // 45° à gauche (pointe sud)
-      { name: 'Club', turn: -160, r: 20, hay: true },   // 20° à droite, bien serré
-      { name: 'Abbey', turn: 35, r: 120, hay: false }   // courbe à gauche (145°)
-    ],
-    finishDistFromAbbeyVertex: 200, // position de la ligne d'arrivée sur Farm Straight (avant échelle)
-    spawnBackFromFinish: 26         // la voiture démarre 26 m avant la ligne
+  var TRACKS = {
+    s1948: {
+      id: 's1948',
+      name: 'Silverstone 1948',
+      blurb: 'RAC International Grand Prix — pistes d’envol, Seagrave & Seaman face à face',
+      edges: [544.2, 403.9, 620.0, 532.3, 280.0, 380.0, 850.0, 932.3, 520.0, 420.0],
+      edgeNames: ['Farm Straight', '', '', '', '', '', 'Hangar Straight', '', '', ''],
+      corners: [
+        { name: 'Woodcote', turn: -90, r: 55, hay: true },   // 90° à droite
+        { name: 'Copse', turn: -110, r: 45, hay: true },   // 70° à droite
+        { name: 'Seagrave', turn: 135, r: 22, hay: false },  // 45° à gauche (pointe nord)
+        { name: 'Maggotts', turn: -90, r: 50, hay: true },   // 90° à droite
+        { name: 'Becketts', turn: -90, r: 50, hay: true },   // 90° à droite
+        { name: 'Chapel', turn: 35, r: 120, hay: false },  // courbe à gauche (145°)
+        { name: 'Stowe', turn: -160, r: 20, hay: true },   // 20° à droite, bien serré
+        { name: 'Seaman', turn: 135, r: 22, hay: false },  // 45° à gauche (pointe sud)
+        { name: 'Club', turn: -160, r: 20, hay: true },   // 20° à droite, bien serré
+        { name: 'Abbey', turn: 35, r: 120, hay: false }   // courbe à gauche (145°)
+      ],
+      barrier: { a: 2, b: 7 },                    // Seagrave / Seaman
+      concrete: [{ from: 1, to: 2 }, { from: 6, to: 7 }], // Copse→Seagrave, Stowe→Seaman
+      finishDistFromAbbeyVertex: 200,
+      spawnBackFromFinish: 26,
+      seed: 19481002 // 2 octobre 1948
+    },
+    s1950: {
+      id: 's1950',
+      name: 'Silverstone 1950',
+      blurb: 'Circuit périmètre du premier Grand Prix de F1 — les pointes ont disparu',
+      edges: [544.2, 430.0, 480.0, 380.0, 280.0, 950.0, 616.7, 957.5],
+      edgeNames: ['Farm Straight', '', '', '', '', 'Hangar Straight', '', ''],
+      corners: [
+        { name: 'Woodcote', turn: -90, r: 55, hay: true },   // 90° à droite
+        { name: 'Copse', turn: -87, r: 50, hay: true },   // à droite, mène droit à Maggotts
+        { name: 'Maggotts', turn: 22, r: 150, hay: true },   // devenu un GAUCHE rapide
+        { name: 'Becketts', turn: -90, r: 50, hay: true },   // 90° à droite
+        { name: 'Chapel', turn: 35, r: 120, hay: false },  // courbe à gauche
+        { name: 'Stowe', turn: -105, r: 50, hay: true },   // virage à droite, mène droit à Club
+        { name: 'Club', turn: -80, r: 45, hay: true },   // virage à droite simple
+        { name: 'Abbey', turn: 35, r: 120, hay: false }   // courbe à gauche
+      ],
+      barrier: null,
+      concrete: [],
+      finishDistFromAbbeyVertex: 200, // départ identique à 1948
+      spawnBackFromFinish: 26,
+      seed: 19500513 // 13 mai 1950 : premier GP du championnat du monde
+    }
   };
 
   function rot(v, a) {
@@ -60,7 +95,9 @@
     return { x: v.x * c - v.y * s, y: v.x * s + v.y * c };
   }
 
-  function buildTrack() {
+  function buildTrack(trackId) {
+    var SPEC = TRACKS[trackId || 's1948'];
+    if (!SPEC) throw new Error('Circuit inconnu : ' + trackId);
     var i, j;
     var n = SPEC.edges.length;
     var lengths = SPEC.edges.map(function (L) { return L * SCALE; });
@@ -74,7 +111,6 @@
     // --- Fermeture exacte de la boucle (moindres carrés sur les longueurs) ---
     var rx = 0, ry = 0;
     for (i = 0; i < n; i++) { rx -= lengths[i] * dirs[i].x; ry -= lengths[i] * dirs[i].y; }
-    // ΔL = Aᵀ (A Aᵀ)⁻¹ r  avec A = [dirs]
     var a11 = 0, a12 = 0, a22 = 0;
     for (i = 0; i < n; i++) { a11 += dirs[i].x * dirs[i].x; a12 += dirs[i].x * dirs[i].y; a22 += dirs[i].y * dirs[i].y; }
     var det = a11 * a22 - a12 * a12;
@@ -100,16 +136,14 @@
       var uIn = dirs[i], uOut = dirs[(i + 1) % n];
       var Tin = { x: V.x - uIn.x * t, y: V.y - uIn.y * t };
       var Tout = { x: V.x + uOut.x * t, y: V.y + uOut.y * t };
-      var side = turn > 0 ? 1 : -1; // +1 : centre à gauche du sens de marche
+      var side = turn > 0 ? 1 : -1;
       var nrm = rot(uIn, side * Math.PI / 2);
       var C = { x: Tin.x + nrm.x * R, y: Tin.y + nrm.y * R };
       fillets.push({ Tin: Tin, Tout: Tout, C: C, R: R, turn: turn, t: t, vertex: V });
     }
 
     // --- Échantillonnage de la ligne médiane ---
-    // La boucle démarre au début du segment droit de Farm Straight
-    // (= sortie du virage d'Abbey, dernier congé).
-    var samples = []; // {x, y, s, heading, curv, cornerIdx|-1}
+    var samples = [];
     var sAcc = 0;
 
     function pushSample(x, y, heading, curv, cornerIdx) {
@@ -129,13 +163,12 @@
       }
     }
 
-    var cornerMeta = []; // {entryIdx, midIdx, exitIdx}
+    var cornerMeta = [];
 
     function sampleArc(f, cornerIdx) {
       var a0 = Math.atan2(f.Tin.y - f.C.y, f.Tin.x - f.C.x);
       var steps = Math.max(4, Math.ceil(Math.abs(f.turn) / (2.2 * DEG)));
-      var entryIdx = samples.length - 1; // Tin déjà posé par la droite précédente
-      var hIn = Math.atan2(f.Tin.x === f.vertex.x ? 0 : 0, 1); // (non utilisé)
+      var entryIdx = samples.length - 1;
       for (var k = 1; k <= steps; k++) {
         var a = a0 + f.turn * (k / steps);
         var x = f.C.x + Math.cos(a) * f.R;
@@ -157,12 +190,9 @@
       sampleStraight(from, fillets[i].Tin, headings[i], true);
       sampleArc(fillets[i], i);
     }
-    // Le dernier point (sortie d'Abbey) reboucle sur le premier : on le retire.
     var S = samples[samples.length - 1].s;
-    samples.pop();
+    samples.pop(); // le dernier point reboucle sur le premier
 
-    // Cap correct pour chaque échantillon de ligne droite déjà ok ; recale les caps
-    // d'arc sur [-π, π] pour la propreté.
     for (i = 0; i < samples.length; i++) {
       var h = samples[i].heading;
       while (h > Math.PI) h -= 2 * Math.PI;
@@ -172,7 +202,7 @@
 
     // --- Ligne d'arrivée & départ (sur Farm Straight) ---
     var tAbbey = fillets[n - 1].t;
-    var finishRaw = SPEC.finishDistFromAbbeyVertex * SCALE - tAbbey; // station brute depuis le début de boucle
+    var finishRaw = SPEC.finishDistFromAbbeyVertex * SCALE - tAbbey;
     var finish = {
       x: start.x + dirs[0].x * finishRaw,
       y: start.y + dirs[0].y * finishRaw,
@@ -186,7 +216,6 @@
       heading: headings[0]
     };
 
-    // Stations rebasées : s = 0 sur la ligne d'arrivée
     function rebase(sRaw) { var s = sRaw - finishRaw; if (s < 0) s += S; return s; }
     for (i = 0; i < samples.length; i++) samples[i].s = rebase(samples[i].s);
 
@@ -202,22 +231,7 @@
     }
     checkpoints.sort(function (a, b) { return a.s - b.s; });
 
-    // --- Barrière Seagrave / Seaman : mur blanc + bottes de foin ---
-    var idxSg = cornerMeta[2].midIdx, idxSm = cornerMeta[7].midIdx;
-    var apexSg = samples[idxSg], apexSm = samples[idxSm];
-    var mid = { x: (apexSg.x + apexSm.x) / 2, y: (apexSg.y + apexSm.y) / 2 };
-    var axis = { x: apexSm.x - apexSg.x, y: apexSm.y - apexSg.y };
-    var axisLen = Math.hypot(axis.x, axis.y);
-    axis.x /= axisLen; axis.y /= axisLen;
-    var wdir = { x: -axis.y, y: axis.x }; // perpendiculaire à l'axe des deux virages
-    var wallHalf = 18;
-    var walls = [{
-      x1: mid.x - wdir.x * wallHalf, y1: mid.y - wdir.y * wallHalf,
-      x2: mid.x + wdir.x * wallHalf, y2: mid.y + wdir.y * wallHalf,
-      thickness: 0.5, height: 1.15
-    }];
-
-    var rng = mulberry32(19481002); // 2 octobre 1948 : GP de Grande-Bretagne
+    var rng = mulberry32(SPEC.seed);
     var bales = [];
     var BALE = { lx: 1.45, ly: 0.85, h: 0.8, collR: 0.85 };
 
@@ -225,32 +239,58 @@
       bales.push({ x: x, y: y, yaw: yaw + (rng() - 0.5) * 0.22 });
     }
 
-    // Deux rangées de bottes de part et d'autre du mur blanc
-    var row, k;
-    for (row = -1; row <= 1; row += 2) {
-      var off = 2.1;
-      var count = 25;
-      for (k = 0; k < count; k++) {
-        var wpos = -wallHalf - 0.8 + (k / (count - 1)) * (2 * wallHalf + 1.6);
-        addBale(mid.x + wdir.x * wpos + axis.x * off * row,
-          mid.y + wdir.y * wpos + axis.y * off * row,
-          Math.atan2(wdir.y, wdir.x));
+    // --- Barrière entre deux virages (1948 : Seagrave / Seaman) ---
+    var walls = [];
+    var barrier = null;
+    if (SPEC.barrier) {
+      var idxA = cornerMeta[SPEC.barrier.a].midIdx, idxB = cornerMeta[SPEC.barrier.b].midIdx;
+      var apexA = samples[idxA], apexB = samples[idxB];
+      var mid = { x: (apexA.x + apexB.x) / 2, y: (apexA.y + apexB.y) / 2 };
+      var axis = { x: apexB.x - apexA.x, y: apexB.y - apexA.y };
+      var axisLen = Math.hypot(axis.x, axis.y);
+      axis.x /= axisLen; axis.y /= axisLen;
+      var wdir = { x: -axis.y, y: axis.x };
+      var wallHalf = 18;
+      walls.push({
+        x1: mid.x - wdir.x * wallHalf, y1: mid.y - wdir.y * wallHalf,
+        x2: mid.x + wdir.x * wallHalf, y2: mid.y + wdir.y * wallHalf,
+        thickness: 0.5, height: 1.15
+      });
+      barrier = { mid: mid, axis: axis, wdir: wdir, apexSg: apexA, apexSm: apexB, gap: axisLen };
+
+      // deux rangées de bottes de part et d'autre du mur blanc
+      for (var row = -1; row <= 1; row += 2) {
+        var off = 2.1, count = 25;
+        for (var k = 0; k < count; k++) {
+          var wpos = -wallHalf - 0.8 + (k / (count - 1)) * (2 * wallHalf + 1.6);
+          addBale(mid.x + wdir.x * wpos + axis.x * off * row,
+            mid.y + wdir.y * wpos + axis.y * off * row,
+            Math.atan2(wdir.y, wdir.x));
+        }
       }
     }
 
-    // Bottes de foin à l'extérieur des virages protégés
+    // --- Bottes de foin à l'extérieur des virages protégés ---
     for (i = 0; i < n; i++) {
       if (!SPEC.corners[i].hay) continue;
       var meta = cornerMeta[i];
-      var sideOut = SPEC.corners[i].turn > 0 ? -1 : 1; // extérieur = côté opposé au centre
-      var span = meta.exitIdx - meta.entryIdx;
+      var sideOut = SPEC.corners[i].turn > 0 ? -1 : 1;
       var stride = Math.max(1, Math.round(2.4 / (S / samples.length)));
       for (j = meta.entryIdx - 2 * stride; j <= meta.exitIdx + 2 * stride; j += stride) {
         var sm = samples[(j + samples.length) % samples.length];
         var lat = TRACK_W / 2 + 2.6;
-        var nx = -Math.sin(sm.heading), ny = Math.cos(sm.heading); // gauche du sens de marche
+        var nx = -Math.sin(sm.heading), ny = Math.cos(sm.heading);
         addBale(sm.x + nx * lat * sideOut, sm.y + ny * lat * sideOut, sm.heading);
       }
+    }
+
+    // --- Plages en dalles de béton (anciennes pistes d'envol) ---
+    var concreteRanges = [];
+    for (i = 0; i < SPEC.concrete.length; i++) {
+      concreteRanges.push([
+        cornerMeta[SPEC.concrete[i].from].exitIdx,
+        cornerMeta[SPEC.concrete[i].to].exitIdx
+      ]);
     }
 
     // --- Panneaux de virage ---
@@ -279,22 +319,21 @@
       if (sp.y > bbox.maxY) bbox.maxY = sp.y;
     }
 
-    // --- Arbres décoratifs (hors piste, hors barrière) ---
     var trees = [];
-    var margin = 120;
-    var track = null; // rempli après création de l'objet (projection nécessaire)
-
     var trackObj = {
+      id: SPEC.id, name: SPEC.name, blurb: SPEC.blurb,
       samples: samples, S: S, width: TRACK_W,
       checkpoints: checkpoints, finish: finish, spawn: spawn,
       walls: walls, bales: bales, baleDims: BALE,
-      barrier: { mid: mid, axis: axis, wdir: wdir, apexSg: apexSg, apexSm: apexSm, gap: axisLen },
+      barrier: barrier, concreteRanges: concreteRanges,
       signs: signs, bbox: bbox, trees: trees,
       closureError: closureError, cornerMeta: cornerMeta, spec: SPEC,
       verts: verts, lengths: lengths, headings: headings
     };
     buildGrid(trackObj);
 
+    // --- Arbres décoratifs (hors piste, hors barrière) ---
+    var margin = 120;
     var tries = 0;
     while (trees.length < 46 && tries < 4000) {
       tries++;
@@ -302,7 +341,7 @@
       var ty = bbox.minY - margin + rng() * (bbox.maxY - bbox.minY + 2 * margin);
       var pr = projectToTrack(trackObj, tx, ty);
       if (pr.dist < TRACK_W / 2 + 16) continue;
-      if (Math.hypot(tx - mid.x, ty - mid.y) < 55) continue;
+      if (barrier && Math.hypot(tx - barrier.mid.x, ty - barrier.mid.y) < 55) continue;
       var okT = true;
       for (j = 0; j < trees.length; j++) {
         if (Math.hypot(tx - trees[j].x, ty - trees[j].y) < 22) { okT = false; break; }
@@ -326,8 +365,7 @@
     track.grid = g;
   }
 
-  /* Projection : renvoie {dist, lat, s, idx, heading}.
-     lat > 0 : voiture à gauche de la ligne médiane. */
+  /* Projection : renvoie {dist, lat, s, idx, heading}. lat > 0 : à gauche. */
   function projectToTrack(track, x, y) {
     var g = track.grid, samples = track.samples, nS = samples.length;
     var cx = Math.floor((x - g.minX) / g.cell), cy = Math.floor((y - g.minY) / g.cell);
@@ -345,17 +383,15 @@
           }
         }
       }
-      // un anneau supplémentaire après le premier succès pour éviter les faux voisins
       if (best >= 0 && ring >= 1 && bestD2 < (ring * g.cell) * (ring * g.cell)) break;
     }
-    if (best < 0) { // très loin de la piste : balayage complet
+    if (best < 0) {
       for (var q = 0; q < nS; q++) {
         var spq = samples[q];
         var dq = (spq.x - x) * (spq.x - x) + (spq.y - y) * (spq.y - y);
         if (dq < bestD2) { bestD2 = dq; best = q; }
       }
     }
-    // Raffinement : projection sur les segments voisins
     var result = null;
     for (var o = -1; o <= 0; o++) {
       var i0 = (best + o + nS) % nS, i1 = (i0 + 1) % nS;
@@ -370,9 +406,7 @@
       if (!result || d < result.dist) {
         var segLen = Math.sqrt(L2);
         var sHere = A.s + segLen * t;
-        if (i1 === 0) { /* wrap : A est le dernier échantillon */ }
         if (sHere >= track.S) sHere -= track.S;
-        // signe : gauche (+) / droite (-) via produit vectoriel direction × (P-Q)
         var cross = abx * (y - qy) - aby * (x - qx);
         result = {
           dist: d, lat: cross >= 0 ? d : -d, s: sHere,
@@ -383,12 +417,10 @@
     return result;
   }
 
-  /* Échantillon le plus proche d'une station donnée (pour l'autopilote) */
+  /* Échantillon le plus proche d'une station donnée (autopilote) */
   function sampleAtStation(track, s) {
     var S = track.S;
     s = ((s % S) + S) % S;
-    // les stations rebasées sont croissantes à partir de l'index de la ligne d'arrivée ;
-    // recherche binaire sur tableau "déroulé"
     var samples = track.samples, n = samples.length;
     if (track._sOrder === undefined) {
       var order = [];
@@ -404,10 +436,18 @@
     return samples[ord[lo % n]];
   }
 
+  function trackList() {
+    var out = [];
+    for (var id in TRACKS) out.push({ id: id, name: TRACKS[id].name, blurb: TRACKS[id].blurb });
+    return out;
+  }
+
   var TrackKit = {
     buildTrack: buildTrack,
     projectToTrack: projectToTrack,
     sampleAtStation: sampleAtStation,
+    trackList: trackList,
+    TRACKS: TRACKS,
     TRACK_W: TRACK_W,
     SCALE: SCALE
   };

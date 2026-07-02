@@ -60,13 +60,15 @@
     ctx.moveTo(this.mapX(f.x - nx * 12), this.mapY(f.y - ny * 12));
     ctx.lineTo(this.mapX(f.x + nx * 12), this.mapY(f.y + ny * 12));
     ctx.stroke();
-    // mur blanc de la barrière
-    var w = track.walls[0];
-    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(this.mapX(w.x1), this.mapY(w.y1));
-    ctx.lineTo(this.mapX(w.x2), this.mapY(w.y2));
-    ctx.stroke();
+    // mur blanc de la barrière (s'il existe sur ce circuit)
+    if (track.walls.length) {
+      var w = track.walls[0];
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(this.mapX(w.x1), this.mapY(w.y1));
+      ctx.lineTo(this.mapX(w.x2), this.mapY(w.y2));
+      ctx.stroke();
+    }
   };
 
   HUD.prototype.update = function () {

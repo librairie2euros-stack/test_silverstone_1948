@@ -94,8 +94,7 @@
     return tx;
   }
 
-  function Renderer3D(canvas, track) {
-    this.track = track;
+  function Renderer3D(canvas) {
     var renderer = this.renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     renderer.setSize(window.innerWidth, window.innerHeight);
@@ -103,15 +102,40 @@
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
-    var scene = this.scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x9ec8ec);
-    scene.fog = new THREE.Fog(0xaed0ea, 350, 1500);
-
     this.camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.3, 3000);
     this.cameraMode = 0; // 0 poursuite, 1 capot, 2 vue du ciel
     this._camPos = new THREE.Vector3();
     this._camLook = new THREE.Vector3();
     this._camInit = false;
+    this.scene = null;
+    this.track = null;
+  }
+
+  /* Libère proprement la scène courante (changement de circuit). */
+  Renderer3D.prototype._disposeScene = function () {
+    if (!this.scene) return;
+    this.scene.traverse(function (obj) {
+      if (obj.geometry) obj.geometry.dispose();
+      if (obj.material) {
+        var mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+        for (var i = 0; i < mats.length; i++) {
+          if (mats[i].map) mats[i].map.dispose();
+          mats[i].dispose();
+        }
+      }
+    });
+    this.scene = null;
+  };
+
+  /* Construit (ou reconstruit) toute la scène pour un circuit donné. */
+  Renderer3D.prototype.loadTrack = function (track) {
+    this._disposeScene();
+    this.track = track;
+    this._camInit = false;
+
+    var scene = this.scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x9ec8ec);
+    scene.fog = new THREE.Fog(0xaed0ea, 350, 1500);
 
     // --- Lumières ---
     var hemi = new THREE.HemisphereLight(0xcfe6ff, 0x59783f, 0.65);
@@ -136,7 +160,7 @@
     this._buildSigns();
     this._buildTrees();
     this._buildCar();
-  }
+  };
 
   /* ------------------------- Sol ------------------------- */
   Renderer3D.prototype._buildGround = function () {
@@ -197,20 +221,18 @@
     mesh.receiveShadow = true;
     this.scene.add(mesh);
 
-    // Pistes d'envol en dalles de béton : Copse → Seagrave et Stowe → Seaman
-    // (anciennes runways de la RAF ; dalles ~7 m avec joints visibles)
-    var meta = this.track.cornerMeta;
-    var concMat = new THREE.MeshLambertMaterial({ map: makeConcreteTexture() });
-    var runways = [
-      [meta[1].exitIdx, meta[2].exitIdx],  // sortie de Copse → fin du virage Seagrave
-      [meta[6].exitIdx, meta[7].exitIdx]   // sortie de Stowe → fin du virage Seaman
-    ];
-    for (var rw = 0; rw < runways.length; rw++) {
-      var rMesh = new THREE.Mesh(
-        this._ribbonGeometry(W / 2, -W / 2, 0.012, runways[rw][0], runways[rw][1], 14),
-        concMat);
-      rMesh.receiveShadow = true;
-      this.scene.add(rMesh);
+    // Pistes d'envol en dalles de béton (plages définies par le circuit ;
+    // 1948 : Copse → Seagrave et Stowe → Seaman ; dalles ~7 m, joints visibles)
+    var runways = this.track.concreteRanges || [];
+    if (runways.length) {
+      var concMat = new THREE.MeshLambertMaterial({ map: makeConcreteTexture() });
+      for (var rw = 0; rw < runways.length; rw++) {
+        var rMesh = new THREE.Mesh(
+          this._ribbonGeometry(W / 2, -W / 2, 0.012, runways[rw][0], runways[rw][1], 14),
+          concMat);
+        rMesh.receiveShadow = true;
+        this.scene.add(rMesh);
+      }
     }
 
     var lineMat = new THREE.MeshBasicMaterial({ color: 0xe8e6e0 });

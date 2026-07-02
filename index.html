@@ -43,17 +43,27 @@
   #lapmsg.ko { background: #7a7f87; }
 
   #overlay {
-    position: fixed; inset: 0; z-index: 20; cursor: pointer;
-    background: radial-gradient(ellipse at center, rgba(18,28,16,0.82), rgba(5,8,5,0.94));
+    position: fixed; inset: 0; z-index: 20; overflow-y: auto;
+    background: radial-gradient(ellipse at center, rgba(18,28,16,0.86), rgba(5,8,5,0.96));
     color: #f5f2e8; display: flex; flex-direction: column;
     align-items: center; justify-content: center; text-align: center;
   }
-  #overlay h1 { font-size: 44px; margin: 0 0 4px; letter-spacing: 3px; }
-  #overlay h2 { font-size: 17px; margin: 0 0 26px; font-weight: 400; opacity: 0.85; }
-  #overlay .keys { font-size: 15px; line-height: 2; background: rgba(255,255,255,0.07);
-    border-radius: 12px; padding: 16px 34px; }
+  #overlay h1 { font-size: 42px; margin: 12px 0 2px; letter-spacing: 3px; }
+  #overlay h2 { font-size: 16px; margin: 0 0 20px; font-weight: 400; opacity: 0.85; }
+  #trackcards { display: flex; gap: 22px; margin-bottom: 22px; flex-wrap: wrap; justify-content: center; }
+  .trackcard {
+    cursor: pointer; background: rgba(255,255,255,0.07); border: 2px solid rgba(255,255,255,0.18);
+    border-radius: 14px; padding: 14px 18px 12px; width: 240px; transition: all 0.15s;
+  }
+  .trackcard:hover { background: rgba(255,210,60,0.14); border-color: #ffd23c; transform: translateY(-3px); }
+  .trackcard canvas { background: rgba(0,0,0,0.25); border-radius: 8px; }
+  .trackcard b { display: block; font-size: 18px; margin-top: 8px; color: #ffd23c; }
+  .trackcard span { display: block; font-size: 12px; opacity: 0.8; line-height: 1.45; margin-top: 4px; min-height: 50px; }
+  .trackcard .len { font-size: 13px; opacity: 0.95; margin-top: 5px; display: block; }
+  #overlay .keys { font-size: 14px; line-height: 1.9; background: rgba(255,255,255,0.07);
+    border-radius: 12px; padding: 12px 30px; }
   #overlay .keys b { color: #ffd23c; }
-  #overlay .go { margin-top: 28px; font-size: 20px; font-weight: 700; color: #ffd23c;
+  #overlay .go { margin: 18px 0 14px; font-size: 18px; font-weight: 700; color: #ffd23c;
     animation: blink 1.2s infinite; }
   @keyframes blink { 50% { opacity: 0.35; } }
 </style>
@@ -75,17 +85,17 @@
 <canvas id="minimap" width="235" height="235"></canvas>
 
 <div id="overlay">
-  <h1>SILVERSTONE 1948</h1>
-  <h2>Monoplace moderne (TC · ABS · ESP · appui aéro) sur le circuit d'époque de l'aérodrome — 3,54 km</h2>
+  <h1>SILVERSTONE</h1>
+  <h2>Monoplace moderne (TC · ABS · ESP · appui aéro) sur les circuits d'époque de l'aérodrome</h2>
+  <div id="trackcards"></div>
   <div class="keys">
-    <b>Z / W / ↑</b> accélérer &nbsp;&nbsp; <b>S / ↓</b> freiner &amp; marche arrière<br>
-    <b>Q / A / ←</b> et <b>D / →</b> tourner &nbsp;&nbsp; <b>Espace</b> frein à main (débranche les aides, pour glisser)<br>
-    <b>R</b> replacer la voiture &nbsp;&nbsp; <b>C</b> changer de caméra &nbsp;&nbsp; <b>P</b> pilote automatique<br>
-    Valide les 10 points de contrôle (cercles rouges) puis franchis la ligne blanche&nbsp;!<br>
-    Les lignes droites Copse→Seagrave et Stowe→Seaman roulent sur les dalles de béton des anciennes pistes d'envol&nbsp;;
-    Seagrave et Seaman sont séparés par le mur blanc et les bottes de foin.
+    <b>Z / W / ↑</b> accélérer &nbsp;&nbsp; <b>S / ↓</b> freiner &amp; marche arrière &nbsp;&nbsp;
+    <b>Q / A / ←</b> et <b>D / →</b> tourner<br>
+    <b>Espace</b> frein à main (débranche les aides) &nbsp;&nbsp; <b>R</b> replacer &nbsp;&nbsp;
+    <b>C</b> caméra &nbsp;&nbsp; <b>P</b> autopilote &nbsp;&nbsp; <b>Échap</b> menu circuits<br>
+    Valide tous les points de contrôle (cercles rouges) puis franchis la ligne blanche&nbsp;!
   </div>
-  <div class="go">— Cliquer ou appuyer sur une touche pour démarrer —</div>
+  <div class="go">— Clique sur un circuit pour démarrer —</div>
 </div>
 
 <script src="lib/three.min.js"></script>

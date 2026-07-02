@@ -1,18 +1,26 @@
-# Silverstone 1948 — jeu de course 3D
+# Silverstone 1948 & 1950 — jeu de course 3D
 
 Un jeu de voiture 3D simple mais réaliste : une **monoplace moderne**
-(antipatinage, ABS, ESP, appui aérodynamique) lancée sur le tracé
-historique du **RAC International Grand Prix 1948** à Silverstone — le
-circuit sur l'ancien aérodrome, avec ses deux pointes rentrantes le long
-des pistes d'envol **en dalles de béton**, où **Seagrave** et **Seaman**
-se font face au centre, séparés par un mur blanc et des bottes de foin
-comme l'écran de séparation de l'époque.
+(antipatinage, ABS, ESP, appui aérodynamique) sur les tracés historiques
+de Silverstone, au choix dans le **menu de sélection** :
 
-![Aperçu du tracé](tools/track-preview.svg)
+- **Silverstone 1948** (3,54 km) — le circuit du RAC International Grand
+  Prix, avec ses deux pointes rentrantes le long des pistes d'envol **en
+  dalles de béton**, où **Seagrave** et **Seaman** se font face au
+  centre, séparés par un mur blanc et des bottes de foin.
+- **Silverstone 1950** (3,25 km) — le circuit périmètre du **premier
+  Grand Prix du championnat du monde de F1** (13 mai 1950) : les pointes
+  ont disparu, Copse mène directement à Maggotts (devenu un virage à
+  gauche), Stowe (droite) mène directement à Club (droite simple). Le
+  lieu de départ est identique, sur Farm Straight.
 
-| Départ sur Farm Straight | Seagrave / Seaman et leur barrière |
+| Silverstone 1948 | Silverstone 1950 |
 |---|---|
-| ![Départ](docs/capture-depart.png) | ![Barrière centrale](docs/capture-seagrave-seaman.png) |
+| ![1948](tools/track-preview-1948.svg) | ![1950](tools/track-preview-1950.svg) |
+
+| Menu de sélection | Dalles de béton (1948) | Seagrave / Seaman (1948) |
+|---|---|---|
+| ![Menu](docs/capture-menu.png) | ![Départ](docs/capture-depart.png) | ![Barrière](docs/capture-seagrave-seaman.png) |
 
 ## Jouer
 
@@ -38,21 +46,22 @@ python3 -m http.server 8000
 | `R` | Replacer la voiture sur la piste |
 | `C` | Caméra (poursuite / capot / ciel) |
 | `P` | Pilote automatique (démonstration) |
+| `Échap` | Retour au menu de sélection des circuits |
 
 Les touches sont détectées par **position physique** : ZQSD (AZERTY) et
 WASD (QWERTY) fonctionnent tous les deux, ainsi que les flèches.
 
 ### But du jeu
 
-Valider les **10 points de contrôle** (cercles rouges au sol, affichés
-pour le débogage — ils deviennent verts une fois validés) dans l'ordre,
-puis franchir la **ligne blanche épaisse** sur Farm Straight pour valider
-le tour et enregistrer le chrono. Si la voiture quitte la piste, le
-bandeau **« Hors-Piste ! »** (fond rouge, texte blanc) s'affiche en haut
-au milieu ; au retour sur le bitume il devient vert et disparaît après
-1 seconde.
+Valider les **points de contrôle** (10 en 1948, 8 en 1950 — cercles
+rouges au sol, affichés pour le débogage, verts une fois validés) dans
+l'ordre, puis franchir la **ligne blanche épaisse** sur Farm Straight
+pour valider le tour et enregistrer le chrono. Si la voiture quitte la
+piste, le bandeau **« Hors-Piste ! »** (fond rouge, texte blanc)
+s'affiche en haut au milieu ; au retour sur le bitume il devient vert et
+disparaît après 1 seconde.
 
-## Le tracé
+## Le tracé 1948
 
 Les angles indiqués sont les angles *intérieurs* des virages : le
 changement de cap vaut 180° − angle. La somme des changements de cap fait
@@ -84,6 +93,27 @@ empruntent les anciennes pistes d'envol de la RAF : leur sol est en
 **dalles de béton** (~7 m, joints apparents), contrairement au reste du
 circuit en asphalte.
 
+## Le tracé 1950
+
+Le circuit périmètre du premier GP de F1, dérivé du 1948 : les deux
+pointes centrales sont supprimées.
+
+| # | Virage | Sens | Changement de cap |
+|---|--------|------|-------------------|
+| — | Farm Straight (départ identique) | — | — |
+| 1 | Woodcote | droite | 90° |
+| 2 | Copse | droite | 87° — mène directement à Maggotts |
+| 3 | Maggotts | **gauche** | 22° (kink rapide, R≈108 m) |
+| 4 | Becketts | droite | 90° |
+| 5 | Chapel | gauche | 35° |
+| — | Hangar Straight | — | — |
+| 6 | Stowe | droite | 105° — mène directement à Club |
+| 7 | Club | droite | 80° (virage simple) |
+| 8 | Abbey | gauche | 35° |
+
+Somme des changements de cap : exactement 360°. Pas de barrière ni de
+béton : Seagrave et Seaman ont disparu avec les pointes.
+
 ## Réalisme
 
 - **Physique** : modèle bicyclette dynamique — dérive des pneus avec
@@ -112,17 +142,17 @@ circuit en asphalte.
 ## Architecture
 
 ```
-index.html            page (HUD + chargement des scripts)
+index.html            page (menu + HUD + chargement des scripts)
 silverstone-1948.html version tout-en-un générée (jouable telle quelle)
-js/trackdata.js       géométrie du circuit (module pur, testable en Node)
-js/carphysics.js      physique voiture (module pur)
+js/trackdata.js       registre des circuits (1948, 1950) + géométrie (pur, testable en Node)
+js/carphysics.js      physique voiture moderne : TC, ABS, ESP, appui aéro (pur)
 js/game.js            règles du jeu : CP, tours, hors-piste, collisions (pur)
-js/render3d.js        rendu THREE.js (scène, voiture, caméras, ombres)
+js/render3d.js        rendu THREE.js (scène par circuit, voiture, caméras, ombres)
 js/hud.js             bannière, chronos, minimap
-js/main.js            boucle, clavier, son moteur (WebAudio)
+js/main.js            menu de sélection, boucle, clavier, son moteur
 lib/three.min.js      THREE r147 (MIT)
-tools/validate.mjs    validation géométrique + aperçu SVG
-tools/test-game.mjs   tests physique & logique (tour complet en autopilote)
+tools/validate.mjs    validation géométrique des deux circuits + aperçus SVG
+tools/test-game.mjs   tests physique, stabilité & tours autopilotés (2 circuits)
 tools/build-single.mjs assemble le fichier unique
 ```
 
@@ -134,7 +164,7 @@ node tools/test-game.mjs   # physique + tour complet autopiloté + bannière + c
 node tools/build-single.mjs
 ```
 
-Anecdote : avec l'ancienne mécanique d'époque, l'autopilote bouclait en
-2:55.9 — la pole réelle de 1948 tournait autour de 2:56. Avec la
-monoplace moderne (TC/ABS/ESP + appui aéro), il descend à **2:04.2** :
-51 secondes gagnées par 75 ans de progrès mécanique.
+Anecdote : avec l'ancienne mécanique d'époque, l'autopilote bouclait le
+1948 en 2:55.9 — la pole réelle de 1948 tournait autour de 2:56. Avec la
+monoplace moderne (TC/ABS/ESP + appui aéro), il descend à **2:04.2** sur
+le 1948 et **1:38.7** sur le 1950 : 75 ans de progrès mécanique.
