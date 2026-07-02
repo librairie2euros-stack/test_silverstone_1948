@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Silverstone 1948 — Grand Prix</title>
+<style>
+  html, body { margin: 0; padding: 0; overflow: hidden; height: 100%; background: #000;
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  #scene { display: block; width: 100vw; height: 100vh; }
+
+  /* Bannière hors-piste : rectangle en haut au milieu */
+  #banner {
+    position: fixed; top: 18px; left: 50%; transform: translateX(-50%);
+    display: none; padding: 12px 34px; border-radius: 8px;
+    background: #d11f1f; color: #ffffff; font-size: 22px; font-weight: 800;
+    letter-spacing: 1px; box-shadow: 0 4px 14px rgba(0,0,0,0.35);
+    z-index: 10; text-transform: none;
+  }
+
+  .panel {
+    position: fixed; padding: 10px 14px; border-radius: 10px;
+    background: rgba(10, 16, 10, 0.55); color: #f2f2f2; z-index: 5;
+    font-size: 14px; line-height: 1.5; backdrop-filter: blur(2px);
+  }
+  #laptimes { top: 14px; left: 14px; min-width: 170px; font-variant-numeric: tabular-nums; }
+  #cpcount { top: 14px; right: 14px; text-align: right; }
+  #cpcount .dim { opacity: 0.75; font-size: 12px; }
+  #speed { bottom: 14px; left: 14px; font-size: 30px; font-weight: 700; padding: 8px 16px;
+    font-variant-numeric: tabular-nums; }
+  #controls { bottom: 14px; left: 50%; transform: translateX(-50%);
+    font-size: 12px; opacity: 0.85; text-align: center; }
+  #minimap { position: fixed; right: 14px; bottom: 14px; z-index: 5; }
+  #autopilot { top: 64px; left: 50%; transform: translateX(-50%); display: none;
+    background: rgba(20, 60, 140, 0.75); font-weight: 700; }
+
+  #lapmsg {
+    position: fixed; top: 90px; left: 50%; transform: translateX(-50%);
+    display: none; padding: 10px 26px; border-radius: 8px; font-size: 19px; font-weight: 800;
+    z-index: 9; color: #fff; box-shadow: 0 4px 14px rgba(0,0,0,0.35);
+  }
+  #lapmsg.ok { background: #1fae3d; }
+  #lapmsg.ko { background: #7a7f87; }
+
+  #overlay {
+    position: fixed; inset: 0; z-index: 20; cursor: pointer;
+    background: radial-gradient(ellipse at center, rgba(18,28,16,0.82), rgba(5,8,5,0.94));
+    color: #f5f2e8; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; text-align: center;
+  }
+  #overlay h1 { font-size: 44px; margin: 0 0 4px; letter-spacing: 3px; }
+  #overlay h2 { font-size: 17px; margin: 0 0 26px; font-weight: 400; opacity: 0.85; }
+  #overlay .keys { font-size: 15px; line-height: 2; background: rgba(255,255,255,0.07);
+    border-radius: 12px; padding: 16px 34px; }
+  #overlay .keys b { color: #ffd23c; }
+  #overlay .go { margin-top: 28px; font-size: 20px; font-weight: 700; color: #ffd23c;
+    animation: blink 1.2s infinite; }
+  @keyframes blink { 50% { opacity: 0.35; } }
+</style>
+</head>
+<body>
+<canvas id="scene"></canvas>
+
+<div id="banner">Hors-Piste !</div>
+<div id="lapmsg"></div>
+<div id="autopilot" class="panel">PILOTE AUTOMATIQUE (P pour reprendre la main)</div>
+
+<div id="laptimes" class="panel"></div>
+<div id="cpcount" class="panel"></div>
+<div id="speed" class="panel">0 km/h</div>
+<div id="controls" class="panel">
+  ZQSD / WASD / Flèches&nbsp;: conduire &nbsp;·&nbsp; Espace&nbsp;: frein à main &nbsp;·&nbsp;
+  R&nbsp;: replacer &nbsp;·&nbsp; C&nbsp;: caméra &nbsp;·&nbsp; P&nbsp;: autopilote
+</div>
+<canvas id="minimap" width="235" height="235"></canvas>
+
+<div id="overlay">
+  <h1>SILVERSTONE 1948</h1>
+  <h2>RAC International Grand Prix — circuit d'époque sur l'aérodrome, 3,54 km</h2>
+  <div class="keys">
+    <b>Z / W / ↑</b> accélérer &nbsp;&nbsp; <b>S / ↓</b> freiner &amp; marche arrière<br>
+    <b>Q / A / ←</b> et <b>D / →</b> tourner &nbsp;&nbsp; <b>Espace</b> frein à main<br>
+    <b>R</b> replacer la voiture &nbsp;&nbsp; <b>C</b> changer de caméra &nbsp;&nbsp; <b>P</b> pilote automatique<br>
+    Valide les 10 points de contrôle (cercles rouges) puis franchis la ligne blanche&nbsp;!<br>
+    Attention à la chicane centrale&nbsp;: Seagrave et Seaman sont séparés par le mur blanc et les bottes de foin.
+  </div>
+  <div class="go">— Cliquer ou appuyer sur une touche pour démarrer —</div>
+</div>
+
+<script src="lib/three.min.js"></script>
+<script src="js/trackdata.js"></script>
+<script src="js/carphysics.js"></script>
+<script src="js/game.js"></script>
+<script src="js/render3d.js"></script>
+<script src="js/hud.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
